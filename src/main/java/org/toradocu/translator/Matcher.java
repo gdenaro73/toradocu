@@ -558,7 +558,6 @@ public class Matcher {
       // and fill the parenthesis () with the right ones
       foundArgMatch = true;
       if (args != null) {    	  
-          foundArgMatch = false;
     	  //List<String> paramMatch = Arrays.asList(args);
 
           List<String> candidateKeywords = new ArrayList<>(wordsForParameterMatching);
@@ -573,10 +572,13 @@ public class Matcher {
           for (String argType: args) {
         	  // Search a match for the arg: matches with a keyword in the predicate and has same type as arg 
         	  boolean foundMatchingKeyword = false;
-        	  for (String candidateName: candidateKeywords) { // check match for each keyword
-        		  Set<CodeElement<?>> candidatesMatches = this.subjectMatch(candidateName, method);
+        	  
+        	  for (int i = 0; i < candidateKeywords.size(); ++i) { // check match for each keyword
+        		  String candidateK = candidateKeywords.get(i);
+        		  Set<CodeElement<?>> candidatesMatches = this.subjectMatch(candidateK, method);
         		  for (CodeElement<?> candidateM: candidatesMatches) { 
-        			  if (candidateM.equals(currentMatch) || candidateM.equals(receiver)) {
+        			  String candidateMJavaExpr = candidateM.buildJavaExpression();        			  
+        			  if (candidateM.equals(currentMatch) || candidateMJavaExpr.equals(receiver)) {
         				  continue;
         			  }
         			  Type candidateRetType;
@@ -589,10 +591,10 @@ public class Matcher {
         			  } else {
         				  continue;
         			  }
-        			  if (argType.equals(candidateRetType.getTypeName())) {
-        				  String expr = candidateM.buildJavaExpression();
-        				  paramForMatch.add(expr);
-        				  foundMatchingKeyword = true;
+        			  if (argType.equals(candidateRetType.getTypeName())) {        				  
+        				  paramForMatch.add(candidateMJavaExpr);
+        				  foundMatchingKeyword = true; 
+        				  candidateKeywords.remove(i);
         				  break;
         			  }
         		  }
@@ -600,14 +602,19 @@ public class Matcher {
         			  break;
         		  }
         	  }
-        	  if (!foundMatchingKeyword && numNullSeenAndNotUsed > 0) {
+        	  if (!foundMatchingKeyword && numNullSeenAndNotUsed > 0 && 
+        			  !argType.equals("boolean") && !argType.equals("int") && !argType.equals("long") && !argType.equals("short")
+        			  && !argType.equals("float") && !argType.equals("double") && !argType.equals("char")) { 
         		  --numNullSeenAndNotUsed;
         		  paramForMatch.add("null");
+        		  foundMatchingKeyword = true;
+        	  }
+        	  if (!foundMatchingKeyword) {
+        		  foundArgMatch = false;
+        		  break;
         	  }
           }
-          
-          foundArgMatch = (paramForMatch.size() == args.length);
-          
+                    
         /*int pcount = 0;
         for (java.lang.reflect.Parameter p : myParams) {
           Type pt = p.getParameterizedType();
@@ -712,10 +719,10 @@ public class Matcher {
         	System.out.println("[DEBUG: COMPARISON WARNING] OLD DIFFERS. OLD: " + old_match.getBaseExpression() + " , NEW: " + match.getBaseExpression());
     	}
     } else if (old_match != null) {
-        System.out.println("[DEBUG: COMPARISON WARNING] " + method.getSignature() + "::" + predicate + "...");
+        System.out.println("[DEBUG: COMPARISON WARNING] " + method.getDeclaringClass() + "." + method.getSignature() + "::" + predicate + "...");
     	System.out.println("[DEBUG: COMPARISON WARNING] ONLY OLD: " + old_match.getBaseExpression());
     } else if (match != null) {
-        System.out.println("[DEBUG: COMPARISON WARNING] " + method.getSignature() + "::" + predicate + "...");
+        System.out.println("[DEBUG: COMPARISON WARNING] " + method.getDeclaringClass() + "." + method.getSignature() + "::" + predicate + "...");
     	System.out.println("[DEBUG: COMPARISON WARNING] ONLY NEW: " + match.getBaseExpression());    	
     }
 
