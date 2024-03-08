@@ -27,6 +27,7 @@ import com.github.javaparser.ast.stmt.TryStmt;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.PrimitiveType;
 import com.github.javaparser.ast.visitor.VoidVisitor;
+import com.github.javaparser.resolution.UnsolvedSymbolException;
 import com.github.javaparser.symbolsolver.JavaSymbolSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JarTypeSolver;
@@ -547,6 +548,24 @@ public class TestGeneratorValidation {
 			// targetCall has a return value which is currently not assigned to any variable
 			// in the test case
 			String targetCallReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("<[A-Za-z_$]+>", "<?>");
+			// Manage parametric returned type
+			if (targetCallReturnTypeName.matches("[A-Z]+")) {
+				Expression exp = targetCall.getExpression();
+				if (exp.isMethodCallExpr()) {
+					try {
+						String actualType = exp.asMethodCallExpr().resolve().getReturnType().erasure().describe();
+						targetCallReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("[A-Z]+",
+								actualType);
+					} catch (UnsolvedSymbolException e) {
+						log.warn(
+								"Failure in symbol solving to determine actually returned parametric type. Object will be used as a fallback.");
+						targetCallReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("[A-Z]+", "Object");
+					}
+				} else {
+					log.error("A constructor should not return any value. Error in expr: " + exp.toString());
+				}
+			}
+
 			String assignStmt = targetCallReturnTypeName + " _methodResult__ = " + targetCall;
 			try {
 				ExpressionStmt targetCallWithAssignment = StaticJavaParser.parseStatement(assignStmt)
