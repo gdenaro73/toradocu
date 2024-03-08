@@ -22,7 +22,7 @@ public class TestgenTest {
 	/** Directory where test results are saved. */
 	public static final String OUTPUT_DIR = "generated-tests/testgen-experiments-results";
 	public static final String TESTGEN_OUTPUT_DIR = OUTPUT_DIR + "/test-generation-data";
-	public static final String evosuiteJar = "/mnt/Backup/toradocu/lib-evosuite/evosuite-shaded-1.1.1-SNAPSHOT.jar";
+	public static final String evosuiteJar = "lib-evosuite/evosuite-shaded-1.1.1-SNAPSHOT.jar";
 	/** The directory containing the source files on which to run tests. */
 	private final String srcPath;
 	/** The directory containing the binaries on which to run tests. */
@@ -84,6 +84,8 @@ public class TestgenTest {
 						"--evosuite-budget",
 						"60",
 						"--test-generation",
+						"true",
+						"--validate-tests",
 						"true"
 		};
 		final List<String> argsList = new ArrayList<>(Arrays.asList(toradocuArgs));

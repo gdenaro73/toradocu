@@ -386,35 +386,37 @@ public class TestGenerator {
 		}
 
 		String targetMethodName = targetMethod.getName().substring(targetMethod.getName().lastIndexOf('.') + 1);
-	
+
 		List<MethodDeclaration> methodDeclarations = cu.findAll(com.github.javaparser.ast.body.MethodDeclaration.class,
 				c -> true);
 		for (MethodDeclaration m : methodDeclarations) {
 			String testMethodName = "test";
 			testMethodName += capitalizeFirstChar(targetMethodName);
-			testMethodName += "_"; 
+			testMethodName += "_";
 			if (spec instanceof ThrowsSpecification) {
 				ThrowsSpecification throwsSpec = (ThrowsSpecification) spec;
 				String excName = throwsSpec.getExceptionTypeName();
 				testMethodName += excName.substring(excName.lastIndexOf('.') + 1);
-				String guardText = spec.getGuard().getDescription();			
+				String guardText = spec.getGuard().getDescription();
 				testMethodName += "_";
 				testMethodName += extractTextForTestName(guardText, targetMethod);
 			} else if (spec instanceof PostSpecification) {
 				PostSpecification postSpec = (PostSpecification) spec;
 				String propertyText = postSpec.getProperty().getDescription();
 				testMethodName += extractTextForTestName(propertyText, targetMethod);
-				/*String resultText = propertyText.indexOf("if") >= 0 ? propertyText.substring(0, propertyText.indexOf("if")) : propertyText;
-				testMethodName += extractTextForTestName(resultText, targetMethod);
-				String guardText = propertyText.indexOf("if") >= 0 ? propertyText.substring(propertyText.indexOf("if")) : null;
-				if (guardText != null) {
-					testMethodName += "_";
-					testMethodName += extractTextForTestName(guardText, targetMethod);
-				}*/
+				/*
+				 * String resultText = propertyText.indexOf("if") >= 0 ?
+				 * propertyText.substring(0, propertyText.indexOf("if")) : propertyText;
+				 * testMethodName += extractTextForTestName(resultText, targetMethod); String
+				 * guardText = propertyText.indexOf("if") >= 0 ?
+				 * propertyText.substring(propertyText.indexOf("if")) : null; if (guardText !=
+				 * null) { testMethodName += "_"; testMethodName +=
+				 * extractTextForTestName(guardText, targetMethod); }
+				 */
 			}
 			m.setName(testMethodName);
 		}
-		
+
 		List<ExpressionStmt> callsToTargetMethodTmp = cu.findAll(ExpressionStmt.class,
 				c -> c.getExpression().isVariableDeclarationExpr()
 						&& c.getExpression().asVariableDeclarationExpr().getVariable(0).getInitializer().isPresent()
@@ -446,42 +448,33 @@ public class TestGenerator {
 		List<ExpressionStmt> callsToTargetMethod = new ArrayList<ExpressionStmt>();
 		for (ExpressionStmt es : callsToTargetMethodTmp) {
 			List<ResolvedType> targetMethodParameters;
-			NodeList<Expression> argsMethod = null;
 			try {
 				if (es.getExpression().isObjectCreationExpr()) {
 					ResolvedConstructorDeclaration rcd = es.getExpression().asObjectCreationExpr().resolve();
 					targetMethodParameters = rcd.formalParameterTypes();
-					argsMethod = es.getExpression().asObjectCreationExpr().getArguments();
 				} else if (es.getExpression().isAssignExpr()
 						&& es.getExpression().asAssignExpr().getValue().isObjectCreationExpr()) {
 					ResolvedConstructorDeclaration rcd = es.getExpression().asAssignExpr().getValue()
 							.asObjectCreationExpr().resolve();
 					targetMethodParameters = rcd.formalParameterTypes();
-					argsMethod = es.getExpression().asAssignExpr().getValue().asObjectCreationExpr().getArguments();
 				} else if (es.getExpression().isVariableDeclarationExpr() && es.getExpression()
 						.asVariableDeclarationExpr().getVariable(0).getInitializer().get().isObjectCreationExpr()) {
 					ResolvedConstructorDeclaration rcd = es.getExpression().asVariableDeclarationExpr().getVariable(0)
 							.getInitializer().get().asObjectCreationExpr().resolve();
 					targetMethodParameters = rcd.formalParameterTypes();
-					argsMethod = es.getExpression().asVariableDeclarationExpr().getVariable(0).getInitializer().get()
-							.asObjectCreationExpr().getArguments();
 				} else if (es.getExpression().isMethodCallExpr()) {
 					ResolvedMethodDeclaration rcd = es.getExpression().asMethodCallExpr().resolve();
 					targetMethodParameters = rcd.formalParameterTypes();
-					argsMethod = es.getExpression().asMethodCallExpr().getArguments();
 				} else if (es.getExpression().isAssignExpr()
 						&& es.getExpression().asAssignExpr().getValue().isMethodCallExpr()) {
 					ResolvedMethodDeclaration rcd = es.getExpression().asAssignExpr().getValue().asMethodCallExpr()
 							.resolve();
 					targetMethodParameters = rcd.formalParameterTypes();
-					argsMethod = es.getExpression().asAssignExpr().getValue().asMethodCallExpr().getArguments();
 				} else if (es.getExpression().isVariableDeclarationExpr() && es.getExpression()
 						.asVariableDeclarationExpr().getVariable(0).getInitializer().get().isMethodCallExpr()) {
 					ResolvedMethodDeclaration rcd = es.getExpression().asVariableDeclarationExpr().getVariable(0)
 							.getInitializer().get().asMethodCallExpr().resolve();
 					targetMethodParameters = rcd.formalParameterTypes();
-					argsMethod = es.getExpression().asVariableDeclarationExpr().getVariable(0).getInitializer().get()
-							.asMethodCallExpr().getArguments();
 				} else {
 					throw new RuntimeException("Unexpected call to target method: " + es);
 				}
@@ -489,16 +482,22 @@ public class TestGenerator {
 
 				boolean found = false;
 				if (targetMethodParameters.size() == argsWanted.size()) {
-					for (int i = 0; i < argsMethod.size(); i++) {
-						found = false;
-						ResolvedType argMethod = targetMethodParameters.get(i);
-						DocumentedParameter argWanted = argsWanted.get(i);
-						String argMethodString = argMethod.describe();
-						String argWantedString = argWanted.toString().substring(0,
-								argWanted.toString().indexOf(" " + argWanted.getName()));
-						found = argMethodString.equals(argWantedString);
-						if (!found)
-							break;
+					if (targetMethodParameters.size() == 0) {
+						found = true;
+					} else {
+						for (int i = 0; i < targetMethodParameters.size(); i++) {
+							found = false;
+							ResolvedType argMethod = targetMethodParameters.get(i);
+							DocumentedParameter argWanted = argsWanted.get(i);
+							String argMethodString = argMethod.describe();
+							String argWantedString = argWanted.toString().substring(0,
+									argWanted.toString().indexOf(" " + argWanted.getName()));
+							// Replace $ with . to allow comparison of inner classes
+							argWantedString = argWantedString.replace("$", ".");
+							found = argMethodString.equals(argWantedString);
+							if (!found)
+								break;
+						}
 					}
 					if (found)
 						callsToTargetMethod.add(es);
@@ -506,6 +505,7 @@ public class TestGenerator {
 			} catch (Exception e) {
 				// TODO This is a temporary fix. We should analyze why the SymbolSolver
 				// sometimes fails in detecting the constructor/method declaration
+				log.warn("SymbolSolver failure. A check will be added but it may need to be manually removed.", e);
 				callsToTargetMethod.add(es);
 			}
 		}
@@ -612,18 +612,16 @@ public class TestGenerator {
 	private static String extractTextForTestName(String description, DocumentedExecutable method) {
 		String text = "";
 		List<PropositionSeries> props = Parser.parse(new Comment(description), method);
-		for (PropositionSeries p: props) {
+		for (PropositionSeries p : props) {
 			SemanticGraph sg = p.getSemanticGraph();
-			List<String> words = Matcher.relevantWords(sg.vertexListSorted(), 
-					WordType.NN, WordType.WP, WordType.JJ, 
-		    		WordType.PR, WordType.FW, WordType.SYM,
-		    		WordType.VB, WordType.CC, WordType.IN,
-		    		WordType.TO, WordType.EX, WordType.RB, 
-		    		WordType.WRB);
-			for (String w: words) {
+			List<String> words = Matcher.relevantWords(sg.vertexListSorted(), WordType.NN, WordType.WP, WordType.JJ,
+					WordType.PR, WordType.FW, WordType.SYM, WordType.VB, WordType.CC, WordType.IN, WordType.TO,
+					WordType.EX, WordType.RB, WordType.WRB);
+			for (String w : words) {
 				text += capitalizeFirstChar(w);
 			}
 		}
+		text = text.replaceAll("[^A-Za-z_$0-9]", "");
 		return text;
 	}
 
@@ -658,7 +656,8 @@ public class TestGenerator {
 		if (oracle.contains("_methodResult__")) {
 			// targetCall has a return value which is currently not assigned to any variable
 			// in the test case
-			String assignStmt = targetMethodReturnType.getTypeName() + " _methodResult__ = " + targetCall;
+			String targetMethodReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("<[A-Za-z_$]+>", "<?>");
+			String assignStmt = targetMethodReturnTypeName + " _methodResult__ = " + targetCall;
 			try {
 				Statement targetCallWithAssignment = StaticJavaParser.parseStatement(assignStmt);
 				insertionPoint.replace(targetCall, targetCallWithAssignment);
@@ -799,7 +798,7 @@ public class TestGenerator {
 		for (URL cp : configuration.classDirs) {
 			classpathTarget += ":" + cp.getPath();
 		}
-		retVal.add("/Library/Java/JavaVirtualMachines/jdk1.8.0_91.jdk/Contents/Home/bin/java");
+		retVal.add("/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java");
 		retVal.add("-Xmx4G");
 		retVal.add("-jar");
 		retVal.add(configuration.getEvoSuiteJar());
