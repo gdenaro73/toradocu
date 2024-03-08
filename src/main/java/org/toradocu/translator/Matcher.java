@@ -272,7 +272,7 @@ public class Matcher {
 
     // Filter collected code elements that refer to the documented method under analysis.
     // This avoids to generate specifications mentioning the method whose behavior they specify.
-    codeElements =
+    List<CodeElement<?>> filteredMethodList = /* use a list, not a set, to keep the items in the same order */
         codeElements
             .stream()
             .filter(
@@ -298,10 +298,10 @@ public class Matcher {
                   }
                   return true;
                 })
-            .collect(Collectors.toSet());
+            .collect(Collectors.toList());
 
-    List<CodeElement<?>> sortedMethodList = new ArrayList<CodeElement<?>>(codeElements);
-    
+    codeElements.clear();
+    codeElements.addAll(filteredMethodList);
     List<String> wordsForParameterMatching = relevantWords(sg.vertexListSorted(), 
     		WordType.NN, WordType.WP, WordType.JJ, 
     		WordType.PR, WordType.FW, WordType.SYM);
@@ -320,6 +320,7 @@ public class Matcher {
         // it is important to provide a fixed order since this point, to prevent method with same
         // score
         // being put in map in a different order every execution
+        List<CodeElement<?>> sortedMethodList = new ArrayList<>(codeElements);
         Collections.sort(sortedMethodList, new JavaExpressionComparator());
         LinkedHashMap<CodeElement<?>, Double> semanticMethodMatches =
             semanticMatcher.runSemanticMatch(
@@ -510,8 +511,12 @@ public class Matcher {
       String predicate, Set<CodeElement<?>> codeElements, DocumentedExecutable method, List<String> wordsForParameterMatching) {
     List<CodeElement<?>> sortedMethodList;
     sortedMethodList = new ArrayList<>(filterMatchingCodeElements(predicate, codeElements));
-    if (!sortedMethodList.isEmpty())
-      Collections.sort(sortedMethodList, new JavaExpressionComparator());
+    /* If we sort the list, we loose the information on matches that relate with the subject (which were added first) and 
+     * the additional matches taken from other methods of the class to which the subject belongs. Thus, as eventually
+     * we will accept the fist match that can be completed with suitable parameters, we may end up with favouring 
+     * subject-unrelated matches rather than subject-related ones.
+     if (!sortedMethodList.isEmpty())
+      Collections.sort(sortedMethodList, new JavaExpressionComparator());*/
     if (sortedMethodList.isEmpty()) {
       return null;
     } else {
