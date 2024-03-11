@@ -109,6 +109,12 @@ task testgen(type: Test) {
   ignoreFailures = true
 }
 
+task testgenvalidation(type: Test) {
+  include 'org/toradocu/testgenvalidation/*'
+  enableAssertions = false
+  ignoreFailures = true
+}
+
 task copyIssta2018GoalFiles(type: Copy) {
   def basePath = 'src/test/resources/goal-output'
   from(basePath) {
