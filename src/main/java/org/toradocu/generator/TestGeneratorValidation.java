@@ -537,15 +537,15 @@ public class TestGeneratorValidation {
 		if (oracle.contains("_methodResult__") && !targetCall.toString().contains("_methodResult__ =")) {
 			// targetCall has a return value which is currently not assigned to any variable
 			// in the test case
-			String targetCallReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("<[A-Za-z_$]+>", "<?>");
+			String targetCallReturnTypeName = targetMethodReturnType.getTypeName();
+
 			// Manage parametric returned type
 			if (targetCallReturnTypeName.matches("[A-Z]+")) {
 				Expression exp = targetCall.getExpression();
 				if (exp.isMethodCallExpr()) {
 					try {
-						String actualType = exp.asMethodCallExpr().resolve().getReturnType().erasure().describe();
-						targetCallReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("[A-Z]+",
-								actualType);
+						targetCallReturnTypeName = exp.asMethodCallExpr().resolve().getReturnType().erasure()
+								.describe();
 					} catch (UnsolvedSymbolException e) {
 						log.warn(
 								"Failure in symbol solving to determine actually returned parametric type. Object will be used as a fallback.");
@@ -555,6 +555,8 @@ public class TestGeneratorValidation {
 					log.error("A constructor should not return any value. Error in expr: " + exp.toString());
 				}
 			}
+
+			targetCallReturnTypeName = targetCallReturnTypeName.replaceAll("<[A-Za-z0-9_$? ]+>", "<?>");
 
 			String assignStmt = targetCallReturnTypeName + " _methodResult__ = " + targetCall;
 			try {
