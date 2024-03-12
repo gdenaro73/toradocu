@@ -16,6 +16,7 @@ import com.github.javaparser.ast.stmt.CatchClause;
 import com.github.javaparser.ast.stmt.ExpressionStmt;
 import com.github.javaparser.ast.stmt.Statement;
 import com.github.javaparser.ast.stmt.TryStmt;
+import com.github.javaparser.resolution.UnsolvedSymbolException;
 import com.github.javaparser.resolution.declarations.ResolvedConstructorDeclaration;
 import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
 import com.github.javaparser.resolution.types.ResolvedType;
@@ -656,7 +657,27 @@ public class TestGenerator {
 		if (oracle.contains("_methodResult__")) {
 			// targetCall has a return value which is currently not assigned to any variable
 			// in the test case
-			String targetMethodReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("<[A-Za-z_$]+>", "<?>");
+			String targetMethodReturnTypeName = targetMethodReturnType.getTypeName();
+
+			// Manage parametric returned type
+			if (targetMethodReturnTypeName.matches("[A-Z]+")) {
+				Expression exp = targetCall.getExpression();
+				if (exp.isMethodCallExpr()) {
+					try {
+						targetMethodReturnTypeName = exp.asMethodCallExpr().resolve().getReturnType().erasure()
+								.describe();
+					} catch (UnsolvedSymbolException e) {
+						log.warn(
+								"Failure in symbol solving to determine actually returned parametric type. Object will be used as a fallback.");
+						targetMethodReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("[A-Z]+", "Object");
+					}
+				} else {
+					log.error("A constructor should not return any value. Error in expr: " + exp.toString());
+				}
+			}
+			
+			targetMethodReturnTypeName = targetMethodReturnTypeName.replaceAll("<[A-Za-z0-9_$? ]+>", "<?>");
+					
 			String assignStmt = targetMethodReturnTypeName + " _methodResult__ = " + targetCall;
 			try {
 				Statement targetCallWithAssignment = StaticJavaParser.parseStatement(assignStmt);
@@ -732,6 +753,9 @@ public class TestGenerator {
 		if (callExpr.isMethodCallExpr() && callExpr.asMethodCallExpr().getScope().isPresent()) {
 			ret = ret.replace("receiverObjectID", callExpr.asMethodCallExpr().getScope().get().toString());
 		}
+		if (callExpr.isObjectCreationExpr() && ret.contains("receiverObjectID")) {
+			ret = ret.replace("receiverObjectID", callExpr.asObjectCreationExpr().getTypeAsString());
+		}
 
 		// replace methodResult with result from target
 		if (callStmt.getExpression().isVariableDeclarationExpr()) {
@@ -742,9 +766,6 @@ public class TestGenerator {
 					callStmt.getExpression().asAssignExpr().getTarget().asNameExpr().getName().toString());
 		} else if (ret.contains("methodResultID")) {
 			ret = ret.replace("methodResultID", "_methodResult__");
-			// throw new RuntimeException("Condition contains methodResultID (" +
-			// guardString + ") but the test case does not store the return value into a
-			// variable: " + callStmt);
 		}
 
 		// replace args[i] with arguments from target
