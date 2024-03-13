@@ -95,6 +95,9 @@ public enum Configuration {
 	@Parameter(names = "--test-generation", description = "Enable/disable the generation of the test cases", arity = 1)
 	private boolean testGeneration = false;
 
+	@Parameter(names = "--java8path", description = "The system path to execute java8 jvm, needed to run evosuite for test generation", arity = 1)
+	private String java8path = "/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java";
+
 	@Parameter(names = "--test-output-dir", description = "Specifies a directory where Toradocu will store the generated test cases")
 	private String testOutputDir = "tests";
 
@@ -297,6 +300,15 @@ public enum Configuration {
 	 */
 	public boolean isTestGenerationEnabled() {
 		return testGeneration;
+	}
+
+	/**
+	 * Returns the path to execute Java8 JVM.
+	 *
+	 * @return the path to execute Java8 JVM
+	 */
+	public String getJava8path() {
+		return java8path;
 	}
 
 	/**

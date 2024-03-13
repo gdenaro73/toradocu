@@ -743,7 +743,7 @@ public class TestGenerator {
 		for (URL cp : configuration.classDirs) {
 			classpathTarget += ":" + cp.getPath();
 		}
-		retVal.add("/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java");
+		retVal.add(configuration.getJava8path());
 		retVal.add("-Xmx4G");
 		retVal.add("-jar");
 		retVal.add(configuration.getEvoSuiteJar());
