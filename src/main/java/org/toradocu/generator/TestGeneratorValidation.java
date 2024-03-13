@@ -70,7 +70,6 @@ public class TestGeneratorValidation {
 	public static final int MAX_EVALUATORS_PER_EVOSUITE_CALL = 10;
 	public static final String VALIDATORS_FOLDER = "validation";
 	public static final String EVALUATORS_FOLDER = "evaluators";
-	public static final String TESTCASES_FOLDER = "testcasesForValidation";
 	/** {@code Logger} for this class. */
 	private static final Logger log = LoggerFactory.getLogger(TestGeneratorValidation.class);
 
@@ -113,10 +112,9 @@ public class TestGeneratorValidation {
 
 		// Create output directory where test cases are saved.
 
-		final Path testsDir = outputDir.resolve(TESTCASES_FOLDER);
-		final boolean testsDirCreationSucceeded = createOutputDir(testsDir.toString(), false);
+		final boolean testsDirCreationSucceeded = createOutputDir(outputDir.toString(), false);
 		if (!testsDirCreationSucceeded || specifications.isEmpty()) {
-			log.error("Test generation failed, cannot create dir:" + testsDir);
+			log.error("Test generation failed, cannot create dir:" + outputDir);
 			return;
 		}
 
@@ -124,29 +122,31 @@ public class TestGeneratorValidation {
 		String targetClass = configuration.getTargetClass();
 		log.info("Going to generate validation test cases for " + targetClass + " oracles");
 
-		// Launch EvoSuite
-		List<String> evosuiteCommand = buildEvoSuiteCommand(outputDir, testsDir);
-		final Path evosuiteLogFilePath = testsDir.resolve("evosuite-log-" + targetClass + ".txt");
+		if (!configuration.isSkipValidationTestsGeneration()) {
+			// Launch EvoSuite
+			List<String> evosuiteCommand = buildEvoSuiteCommand(outputDir);
+			final Path evosuiteLogFilePath = outputDir.resolve("evosuite-log-" + targetClass + ".txt");
 
-		try {
-			Process processEvosuite = launchProcess(evosuiteCommand, evosuiteLogFilePath);
-			log.info("Launched EvoSuite process, command line: " + evosuiteCommand.stream().reduce("", (s1, s2) -> {
-				return s1 + " " + s2;
-			}));
 			try {
-				processEvosuite.waitFor();
-			} catch (InterruptedException e) {
-				// the performer was shut down: kill the EvoSuite job
-				log.info("Unexpected InterruptedException while running EvoSuite: " + e);
-				processEvosuite.destroy();
+				Process processEvosuite = launchProcess(evosuiteCommand, evosuiteLogFilePath);
+				log.info("Launched EvoSuite process, command line: " + evosuiteCommand.stream().reduce("", (s1, s2) -> {
+					return s1 + " " + s2;
+				}));
+				try {
+					processEvosuite.waitFor();
+				} catch (InterruptedException e) {
+					// the performer was shut down: kill the EvoSuite job
+					log.info("Unexpected InterruptedException while running EvoSuite: " + e);
+					processEvosuite.destroy();
+				}
+			} catch (IOException e) {
+				log.error("Unexpected I/O error while running EvoSuite: " + e);
+				throw new RuntimeException(e);
 			}
-		} catch (IOException e) {
-			log.error("Unexpected I/O error while running EvoSuite: " + e);
-			throw new RuntimeException(e);
 		}
 
 		// Step 2/2: Enrich the generated test cases with assumptions and assertions
-		enrichTestWithOracle(testsDir, targetClass, specifications);
+		enrichTestWithOracle(outputDir, targetClass, specifications);
 
 	}
 
@@ -180,25 +180,27 @@ public class TestGeneratorValidation {
 			}
 		}
 
-		// Create backup test case
-		String backupTestCaseAbsPath = currentTestCase.getAbsolutePath().replace("generated-tests",
-				"generated-tests-backup");
-		File backupTestCase = new File(backupTestCaseAbsPath);
-		try {
-			backupTestCase.mkdirs();
-			Path copiedTestCase = Paths.get(backupTestCase.toURI());
-			Files.copy(testCaseAbsPath, copiedTestCase, StandardCopyOption.REPLACE_EXISTING);
-		} catch (Exception e) {
-			log.error("Fail in backup test cases creation.", e);
-		}
-		String currentScaffolding = testCaseAbsPath.toString().replace("_ESTest", "_ESTest_scaffolding");
-		Path scaffoldingFilePath = Paths.get(currentScaffolding);
-		String backupScaffoldingAbsPath = backupTestCaseAbsPath.replace("_ESTest", "_ESTest_scaffolding");
-		try {
-			Path copiedScaffolding = Paths.get(backupScaffoldingAbsPath);
-			Files.copy(scaffoldingFilePath, copiedScaffolding, StandardCopyOption.REPLACE_EXISTING);
-		} catch (IOException e) {
-			log.warn("Could not copy scaffolding file. This is normal if Evosuite failed in generating a case.");
+		if (configuration.isValidationTestsBackupGeneration()) {
+			// Create backup test case
+			String backupTestCaseAbsPath = currentTestCase.getAbsolutePath().replace("generated-tests",
+					"generated-tests-backup");
+			File backupTestCase = new File(backupTestCaseAbsPath);
+			try {
+				backupTestCase.mkdirs();
+				Path copiedTestCase = Paths.get(backupTestCase.toURI());
+				Files.copy(testCaseAbsPath, copiedTestCase, StandardCopyOption.REPLACE_EXISTING);
+			} catch (Exception e) {
+				log.error("Fail in backup test cases creation.", e);
+			}
+			String currentScaffolding = testCaseAbsPath.toString().replace("_ESTest", "_ESTest_scaffolding");
+			Path scaffoldingFilePath = Paths.get(currentScaffolding);
+			String backupScaffoldingAbsPath = backupTestCaseAbsPath.replace("_ESTest", "_ESTest_scaffolding");
+			try {
+				Path copiedScaffolding = Paths.get(backupScaffoldingAbsPath);
+				Files.copy(scaffoldingFilePath, copiedScaffolding, StandardCopyOption.REPLACE_EXISTING);
+			} catch (IOException e) {
+				log.warn("Could not copy scaffolding file. This is normal if Evosuite failed in generating a case.");
+			}
 		}
 
 		CombinedTypeSolver combinedTypeSolver = new CombinedTypeSolver();
@@ -442,7 +444,6 @@ public class TestGeneratorValidation {
 		Statement uniqueStmt = StaticJavaParser.parseStatement("uniqueGuardIds_lta.add(\"" + identifier + "\");");
 		uniqueStmt.setComment(new LineComment(comment));
 		insertionPoint.add(uniqueStmt);
-		// insertionPoint.addBefore(uniqueStmt, targetCall);
 
 		IfStmt ifContractStatus = new IfStmt();
 		ifContractStatus.setCondition(StaticJavaParser
@@ -450,7 +451,6 @@ public class TestGeneratorValidation {
 		ifContractStatus.setThenStmt(new BlockStmt()
 				.addStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"" + type + "\");"));
 		insertionPoint.add(ifContractStatus);
-		// insertionPoint.addBefore(ifContractStatus, targetCall);
 
 	}
 
@@ -469,16 +469,6 @@ public class TestGeneratorValidation {
 			i.setThenStmt(bs);
 			i.setLineComment(guardsComment);
 			insertionPoint.add(i);
-			/*
-			 * try { insertionPoint.addBefore(i, targetCall); } catch (Throwable e) { String
-			 * targetCallReturnTypeName =
-			 * targetCallReturnType.getTypeName().replaceAll("<[A-Za-z_$]+>", "<?>"); String
-			 * assignStmt = targetCallReturnTypeName + " _methodResult__ = " + targetCall;
-			 * Statement targetCallWithAssignment =
-			 * StaticJavaParser.parseStatement(assignStmt); try {
-			 * insertionPoint.addBefore(i, targetCallWithAssignment); } catch (Throwable t)
-			 * { t.printStackTrace(); } }
-			 */
 		}
 	}
 
@@ -547,15 +537,15 @@ public class TestGeneratorValidation {
 		if (oracle.contains("_methodResult__") && !targetCall.toString().contains("_methodResult__ =")) {
 			// targetCall has a return value which is currently not assigned to any variable
 			// in the test case
-			String targetCallReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("<[A-Za-z_$]+>", "<?>");
+			String targetCallReturnTypeName = targetMethodReturnType.getTypeName();
+
 			// Manage parametric returned type
 			if (targetCallReturnTypeName.matches("[A-Z]+")) {
 				Expression exp = targetCall.getExpression();
 				if (exp.isMethodCallExpr()) {
 					try {
-						String actualType = exp.asMethodCallExpr().resolve().getReturnType().erasure().describe();
-						targetCallReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("[A-Z]+",
-								actualType);
+						targetCallReturnTypeName = exp.asMethodCallExpr().resolve().getReturnType().erasure()
+								.describe();
 					} catch (UnsolvedSymbolException e) {
 						log.warn(
 								"Failure in symbol solving to determine actually returned parametric type. Object will be used as a fallback.");
@@ -565,6 +555,8 @@ public class TestGeneratorValidation {
 					log.error("A constructor should not return any value. Error in expr: " + exp.toString());
 				}
 			}
+
+			targetCallReturnTypeName = targetCallReturnTypeName.replaceAll("<[A-Za-z0-9_$? ]+>", "<?>");
 
 			String assignStmt = targetCallReturnTypeName + " _methodResult__ = " + targetCall;
 			try {
@@ -716,9 +708,6 @@ public class TestGeneratorValidation {
 					callStmt.getExpression().asAssignExpr().getTarget().asNameExpr().getName().toString());
 		} else if (ret.contains("methodResultID")) {
 			ret = ret.replace("methodResultID", "_methodResult__");
-			// throw new RuntimeException("Condition contains methodResultID (" +
-			// guardString + ") but the test case does not store the return value into a
-			// variable: " + callStmt);
 		}
 
 		// replace args[i] with arguments from target
@@ -765,7 +754,7 @@ public class TestGeneratorValidation {
 	 *         {@link List}{@code <}{@link String}{@code >}, suitable to be passed
 	 *         to a {@link ProcessBuilder}.
 	 */
-	private static List<String> buildEvoSuiteCommand(Path outputDir, Path testsDir) {
+	private static List<String> buildEvoSuiteCommand(Path outputDir) {
 		final String targetClass = configuration.getTargetClass();
 		final List<String> retVal = new ArrayList<String>();
 		String classpathTarget = outputDir.toString();
@@ -778,16 +767,15 @@ public class TestGeneratorValidation {
 		// retVal.add("-ea");
 		retVal.add("-jar");
 		retVal.add(configuration.getEvoSuiteJar());
-		// retVal.add("/mnt/Backup/toradocu/lib-evosuite/evosuite-1.2.0.jar");
 		retVal.add("-class");
 		retVal.add(targetClass);
 		retVal.add("-mem");
 		retVal.add("16384");
 		retVal.add("-DCP=" + classpathTarget);
 		retVal.add("-Dassertions=false");
-		retVal.add("-Dsearch_budget=" + configuration.getEvoSuiteBudget()); // configuration.getEvoSuiteBudget()
+		retVal.add("-Dsearch_budget=" + configuration.getEvoSuiteBudget());
 		retVal.add("-Dreport_dir=" + outputDir);
-		retVal.add("-Dtest_dir=" + testsDir);
+		retVal.add("-Dtest_dir=" + outputDir);
 		retVal.add("-Dvirtual_fs=false");
 		retVal.add("-Dcriterion=LINE:BRANCH:EXCEPTION:WEAKMUTATION:OUTPUT:METHOD:METHODNOEXCEPTION:CBRANCH");
 		// retVal.add("-Dno_runtime_dependency");

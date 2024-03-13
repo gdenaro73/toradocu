@@ -16,9 +16,13 @@ import com.github.javaparser.ast.stmt.CatchClause;
 import com.github.javaparser.ast.stmt.ExpressionStmt;
 import com.github.javaparser.ast.stmt.Statement;
 import com.github.javaparser.ast.stmt.TryStmt;
-import com.github.javaparser.resolution.declarations.ResolvedConstructorDeclaration;
-import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
-import com.github.javaparser.resolution.types.ResolvedType;
+import com.github.javaparser.ast.visitor.VoidVisitor;
+import com.github.javaparser.resolution.UnsolvedSymbolException;
+import com.github.javaparser.symbolsolver.JavaSymbolSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.JarTypeSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
 
 import edu.stanford.nlp.semgraph.SemanticGraph;
 
@@ -266,15 +270,13 @@ public class TestGenerator {
 				createEvaluator(method, guards.toArray(new String[0]), postconds, false, evaluatorName, evaluatorsDir,
 						classpathTarget);
 				TestGeneratorSummaryData._I().incGeneratedPositiveEvaluators();
-				evaluatorDefsForEvosuite.peek().getRight().put(testName, Pair.of(method, spec)); // spec for defining
-																									// the assertion,
-																									// when (and if) we
-																									// generate the test
-																									// case later on
-				String evaluatorDef = method.getDeclaringClass().getCanonicalName() + "," + formattedMethodSignature
-						+ "," + (packageName.isEmpty() ? "" : packageName + ".") + evaluatorName;
+				// spec for defining the assertion, when (and if) we generate the test case
+				// later on
+				evaluatorDefsForEvosuite.peek().getRight().put(testName, Pair.of(method, spec));
 				// ...and another evaluator to search for a test case that violates the given
 				// postcondition
+				String evaluatorDef = method.getDeclaringClass().getCanonicalName() + "," + formattedMethodSignature
+						+ "," + (packageName.isEmpty() ? "" : packageName + ".") + evaluatorName;
 				if (!unmodeled) {
 					final String evaluatorForViolationName = evaluatorBaseName + "_failure";
 					final String testForViolationName = testBaseName + "_failure_Test";
@@ -365,6 +367,17 @@ public class TestGenerator {
 		if (!currentTestCase.exists()) {
 			return; // nothing to do, since EvoSuite failed to generate this test case
 		}
+
+		CombinedTypeSolver combinedTypeSolver = new CombinedTypeSolver();
+		combinedTypeSolver.add(new JavaParserTypeSolver(configuration.sourceDir));
+		combinedTypeSolver.add(new ReflectionTypeSolver());
+		try {
+			combinedTypeSolver.add(new JarTypeSolver(configuration.getEvoSuiteJar()));
+		} catch (IOException e) {
+			log.error("Wrong path to Evosuite lib.", e);
+		}
+		JavaSymbolSolver symbolSolver = new JavaSymbolSolver(combinedTypeSolver);
+		StaticJavaParser.getConfiguration().setSymbolResolver(symbolSolver);
 		CompilationUnit cu = null;
 		try {
 			cu = StaticJavaParser.parse(currentTestCase);
@@ -417,98 +430,11 @@ public class TestGenerator {
 			m.setName(testMethodName);
 		}
 
-		List<ExpressionStmt> callsToTargetMethodTmp = cu.findAll(ExpressionStmt.class,
-				c -> c.getExpression().isVariableDeclarationExpr()
-						&& c.getExpression().asVariableDeclarationExpr().getVariable(0).getInitializer().isPresent()
-						&& c.getExpression().asVariableDeclarationExpr().getVariable(0).getInitializer().get()
-								.isMethodCallExpr()
-						&& c.getExpression().asVariableDeclarationExpr().getVariable(0).getInitializer().get()
-								.asMethodCallExpr().getNameAsString().equals(targetMethodName));
-		callsToTargetMethodTmp.addAll(cu.findAll(ExpressionStmt.class,
-				c -> c.getExpression().isAssignExpr() && c.getExpression().asAssignExpr().getValue().isMethodCallExpr()
-						&& c.getExpression().asAssignExpr().getValue().asMethodCallExpr().getNameAsString()
-								.equals(targetMethodName)));
-		callsToTargetMethodTmp.addAll(cu.findAll(ExpressionStmt.class, c -> c.getExpression().isMethodCallExpr()
-				&& c.getExpression().asMethodCallExpr().getNameAsString().equals(targetMethodName)));
-		callsToTargetMethodTmp.addAll(cu.findAll(ExpressionStmt.class,
-				c -> c.getExpression().isVariableDeclarationExpr()
-						&& c.getExpression().asVariableDeclarationExpr().getVariable(0).getInitializer().isPresent()
-						&& c.getExpression().asVariableDeclarationExpr().getVariable(0).getInitializer().get()
-								.isObjectCreationExpr()
-						&& c.getExpression().asVariableDeclarationExpr().getVariable(0).getInitializer().get()
-								.asObjectCreationExpr().getType().getNameAsString().equals(targetMethodName)));
-		callsToTargetMethodTmp.addAll(cu.findAll(ExpressionStmt.class,
-				c -> c.getExpression().isAssignExpr()
-						&& c.getExpression().asAssignExpr().getValue().isObjectCreationExpr()
-						&& c.getExpression().asAssignExpr().getValue().asObjectCreationExpr().getType()
-								.getNameAsString().equals(targetMethodName)));
-		callsToTargetMethodTmp.addAll(cu.findAll(ExpressionStmt.class, c -> c.getExpression().isObjectCreationExpr()
-				&& c.getExpression().asObjectCreationExpr().getType().getNameAsString().equals(targetMethodName)));
-
-		List<ExpressionStmt> callsToTargetMethod = new ArrayList<ExpressionStmt>();
-		for (ExpressionStmt es : callsToTargetMethodTmp) {
-			List<ResolvedType> targetMethodParameters;
-			try {
-				if (es.getExpression().isObjectCreationExpr()) {
-					ResolvedConstructorDeclaration rcd = es.getExpression().asObjectCreationExpr().resolve();
-					targetMethodParameters = rcd.formalParameterTypes();
-				} else if (es.getExpression().isAssignExpr()
-						&& es.getExpression().asAssignExpr().getValue().isObjectCreationExpr()) {
-					ResolvedConstructorDeclaration rcd = es.getExpression().asAssignExpr().getValue()
-							.asObjectCreationExpr().resolve();
-					targetMethodParameters = rcd.formalParameterTypes();
-				} else if (es.getExpression().isVariableDeclarationExpr() && es.getExpression()
-						.asVariableDeclarationExpr().getVariable(0).getInitializer().get().isObjectCreationExpr()) {
-					ResolvedConstructorDeclaration rcd = es.getExpression().asVariableDeclarationExpr().getVariable(0)
-							.getInitializer().get().asObjectCreationExpr().resolve();
-					targetMethodParameters = rcd.formalParameterTypes();
-				} else if (es.getExpression().isMethodCallExpr()) {
-					ResolvedMethodDeclaration rcd = es.getExpression().asMethodCallExpr().resolve();
-					targetMethodParameters = rcd.formalParameterTypes();
-				} else if (es.getExpression().isAssignExpr()
-						&& es.getExpression().asAssignExpr().getValue().isMethodCallExpr()) {
-					ResolvedMethodDeclaration rcd = es.getExpression().asAssignExpr().getValue().asMethodCallExpr()
-							.resolve();
-					targetMethodParameters = rcd.formalParameterTypes();
-				} else if (es.getExpression().isVariableDeclarationExpr() && es.getExpression()
-						.asVariableDeclarationExpr().getVariable(0).getInitializer().get().isMethodCallExpr()) {
-					ResolvedMethodDeclaration rcd = es.getExpression().asVariableDeclarationExpr().getVariable(0)
-							.getInitializer().get().asMethodCallExpr().resolve();
-					targetMethodParameters = rcd.formalParameterTypes();
-				} else {
-					throw new RuntimeException("Unexpected call to target method: " + es);
-				}
-				List<DocumentedParameter> argsWanted = targetMethod.getParameters();
-
-				boolean found = false;
-				if (targetMethodParameters.size() == argsWanted.size()) {
-					if (targetMethodParameters.size() == 0) {
-						found = true;
-					} else {
-						for (int i = 0; i < targetMethodParameters.size(); i++) {
-							found = false;
-							ResolvedType argMethod = targetMethodParameters.get(i);
-							DocumentedParameter argWanted = argsWanted.get(i);
-							String argMethodString = argMethod.describe();
-							String argWantedString = argWanted.toString().substring(0,
-									argWanted.toString().indexOf(" " + argWanted.getName()));
-							// Replace $ with . to allow comparison of inner classes
-							argWantedString = argWantedString.replace("$", ".");
-							found = argMethodString.equals(argWantedString);
-							if (!found)
-								break;
-						}
-					}
-					if (found)
-						callsToTargetMethod.add(es);
-				}
-			} catch (Exception e) {
-				// TODO This is a temporary fix. We should analyze why the SymbolSolver
-				// sometimes fails in detecting the constructor/method declaration
-				log.warn("SymbolSolver failure. A check will be added but it may need to be manually removed.", e);
-				callsToTargetMethod.add(es);
-			}
-		}
+		List<ExpressionStmt> callsToTargetMethodTest = new ArrayList<ExpressionStmt>();
+		SupportStructure ss = new SupportStructure(targetMethod, callsToTargetMethodTest);
+		VoidVisitor<SupportStructure> visitor = new IdentifyCallsToEnrichVisitor();
+		visitor.visit(cu, ss);
+		List<ExpressionStmt> callsToTargetMethod = ss.getTargetCallsList();
 
 		if (callsToTargetMethod.isEmpty()) {
 			TestGeneratorSummaryData._I().incTestCasesWithoutTargetMehtod();
@@ -551,10 +477,8 @@ public class TestGenerator {
 				}
 			}
 		} else {
-			ExpressionStmt targetCall = callsToTargetMethod.get(callsToTargetMethod.size() - 1); // Call for which we
-																									// shall add the
-																									// oracle
-
+			// Call for which we shall add the oracle
+			ExpressionStmt targetCall = callsToTargetMethod.get(callsToTargetMethod.size() - 1);
 			targetCall.setLineComment("** Automatically generated test oracle is: " + spec.getDescription()
 					+ ", with guard: " + spec.getGuard());
 			NodeList<Statement> insertionPoint = ((BlockStmt) targetCall.getParentNode().get()).getStatements();
@@ -656,7 +580,28 @@ public class TestGenerator {
 		if (oracle.contains("_methodResult__")) {
 			// targetCall has a return value which is currently not assigned to any variable
 			// in the test case
-			String targetMethodReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("<[A-Za-z_$]+>", "<?>");
+			String targetMethodReturnTypeName = targetMethodReturnType.getTypeName();
+
+			// Manage parametric returned type
+			if (targetMethodReturnTypeName.matches("[A-Z]+")) {
+				Expression exp = targetCall.getExpression();
+				if (exp.isMethodCallExpr()) {
+					try {
+						targetMethodReturnTypeName = exp.asMethodCallExpr().resolve().getReturnType().erasure()
+								.describe();
+					} catch (UnsolvedSymbolException e) {
+						log.warn(
+								"Failure in symbol solving to determine actually returned parametric type. Object will be used as a fallback.");
+						targetMethodReturnTypeName = targetMethodReturnType.getTypeName().replaceAll("[A-Z]+",
+								"Object");
+					}
+				} else {
+					log.error("A constructor should not return any value. Error in expr: " + exp.toString());
+				}
+			}
+
+			targetMethodReturnTypeName = targetMethodReturnTypeName.replaceAll("<[A-Za-z0-9_$? ]+>", "<?>");
+
 			String assignStmt = targetMethodReturnTypeName + " _methodResult__ = " + targetCall;
 			try {
 				Statement targetCallWithAssignment = StaticJavaParser.parseStatement(assignStmt);
@@ -732,6 +677,9 @@ public class TestGenerator {
 		if (callExpr.isMethodCallExpr() && callExpr.asMethodCallExpr().getScope().isPresent()) {
 			ret = ret.replace("receiverObjectID", callExpr.asMethodCallExpr().getScope().get().toString());
 		}
+		if (callExpr.isObjectCreationExpr() && ret.contains("receiverObjectID")) {
+			ret = ret.replace("receiverObjectID", callExpr.asObjectCreationExpr().getTypeAsString());
+		}
 
 		// replace methodResult with result from target
 		if (callStmt.getExpression().isVariableDeclarationExpr()) {
@@ -742,9 +690,6 @@ public class TestGenerator {
 					callStmt.getExpression().asAssignExpr().getTarget().asNameExpr().getName().toString());
 		} else if (ret.contains("methodResultID")) {
 			ret = ret.replace("methodResultID", "_methodResult__");
-			// throw new RuntimeException("Condition contains methodResultID (" +
-			// guardString + ") but the test case does not store the return value into a
-			// variable: " + callStmt);
 		}
 
 		// replace args[i] with arguments from target
