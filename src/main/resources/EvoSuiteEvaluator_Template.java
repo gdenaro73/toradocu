@@ -9,7 +9,7 @@ import java.util.ArrayList;
 public class EvoSuiteEvaluator_Template {
 	private static final double SMALL_DISTANCE = 1;
 	private static final double BIG_DISTANCE = 1E300;
-	private static final double MED_DISTANCE = 1E300;
+	private static final double MED_DISTANCE = 1E30;
 
 	private Object ___INTERNAL__receiverObjectID__ = null;
 	private Object[] ___INTERNAL__args__ = null;
