@@ -1,6 +1,5 @@
 package org.toradocu.generator;
 
-import com.github.javaparser.JavaParser;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.MethodDeclaration;
@@ -13,9 +12,14 @@ import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.stmt.Statement;
 import com.github.javaparser.ast.visitor.ModifierVisitor;
 
+import static org.toradocu.Toradocu.configuration;
+
 import java.lang.reflect.Modifier;
+import java.util.Arrays;
 
 import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.toradocu.conf.Configuration;
 import org.toradocu.extractor.DocumentedExecutable;
 import org.toradocu.extractor.DocumentedParameter;
@@ -30,6 +34,10 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 	public static final String RECEIVEROBJECT_FIELD = "___INTERNAL__receiverObjectID__";
 	public static final String ARGS_FIELD = "___INTERNAL__args__";
 	public static final String RETVAL_FIELD = "___INTERNAL__retVal_";
+	
+	/** {@code Logger} for this class. */
+	private static final Logger log = LoggerFactory.getLogger(EvaluatorModifierVisitor.class);
+
 
 	public static class InstrumentationData {
 		private final DocumentedExecutable method;
@@ -65,42 +73,54 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 			throw new ClassCastException("expecting data of type InstrumentationData");
 		}
 		InstrumentationData instrumentationData = (InstrumentationData) data;
-		String methodName = methodDeclaration.getName().asString();
-		if (methodName.equals("populateCalculators_preconds")) {
-			addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.preconds, false);    		
-		} else if (methodName.equals("populateCalculators_postconds") && instrumentationData.postconds.length > 0) {
-			if (instrumentationData.postconds.length == 1 && instrumentationData.postconds[0].endsWith("Exception")) {
-				addExceptionDistanceCalculator(methodDeclaration, instrumentationData.method, instrumentationData.postconds[0], instrumentationData.lookForPostCondViolation);    		
-			} else {
-				addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.postconds, instrumentationData.lookForPostCondViolation);    		
-			}
-		} else if (methodName.equals("test0") || methodName.equals("test1")) {
-			// Set the correct input parameters for the newly created evaluator
-			if (!Modifier.isStatic(instrumentationData.method.getExecutable().getModifiers())) {
-				String type = "java.lang.Object";
-				String name = "___receiver__object___";
-				methodDeclaration.addParameter(type, name);
-				Statement stmt = StaticJavaParser.parseStatement(RECEIVEROBJECT_FIELD + " = " + name + ";");
-				methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(0, stmt));
-			}
+		try {
+			String methodName = methodDeclaration.getName().asString();
+			if (methodName.equals("populateCalculators_preconds")) {
+				addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.preconds, false);    		
+			} else if (methodName.equals("populateCalculators_postconds") && instrumentationData.postconds.length > 0) {
+				if (instrumentationData.postconds.length == 1 && instrumentationData.postconds[0].endsWith("Exception")) {
+					addExceptionDistanceCalculator(methodDeclaration, instrumentationData.method, instrumentationData.postconds[0], instrumentationData.lookForPostCondViolation);    		
+				} else {
+					addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.postconds, instrumentationData.lookForPostCondViolation);    		
+				}
+			} else if (methodName.equals("test0") || methodName.equals("test1")) {
+				// Set the correct input parameters for the newly created evaluator
+				if (!Modifier.isStatic(instrumentationData.method.getExecutable().getModifiers())) {
+					String type = "java.lang.Object";
+					String name = "___receiver__object___";
+					methodDeclaration.addParameter(type, name);
+					Statement stmt = StaticJavaParser.parseStatement(RECEIVEROBJECT_FIELD + " = " + name + ";");
+					methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(0, stmt));
+				}
 
-			String allNames = "";
-			int numArgs = instrumentationData.method.getParameters().size();
-			for (int i = 0; i < numArgs; ++i) {
-				String type = "java.lang.Object";
-				String name = "___arg" + i + "__object___";
-				methodDeclaration.addParameter(type, name);
-				allNames += (allNames.isEmpty() ? "" : ", ") + name;
+				String allNames = "";
+				int numArgs = instrumentationData.method.getParameters().size();
+				for (int i = 0; i < numArgs; ++i) {
+					String type = "java.lang.Object";
+					String name = "___arg" + i + "__object___";
+					methodDeclaration.addParameter(type, name);
+					allNames += (allNames.isEmpty() ? "" : ", ") + name;
+				}
+				Statement stmt = StaticJavaParser.parseStatement(ARGS_FIELD + " = new Object[] {" + allNames + "};");
+				methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(0, stmt));
+			} else if (methodName.equals("toString")) { 
+				Statement stmt = StaticJavaParser.parseStatement("s += \"" + 
+						(instrumentationData.preconds.length > 0 ? escapedQuotes(instrumentationData.preconds[0]) : "true") + " ---> " +
+						(instrumentationData.postconds.length > 0 ? escapedQuotes(instrumentationData.postconds[0]) : "true") + "\";");
+				methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(1, stmt));			
 			}
-			Statement stmt = StaticJavaParser.parseStatement(ARGS_FIELD + " = new Object[] {" + allNames + "};");
-			methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(0, stmt));
-		} else if (methodName.equals("toString")) { 
-			Statement stmt = StaticJavaParser.parseStatement("s += \"" + 
-					(instrumentationData.preconds.length > 0 ? instrumentationData.preconds[0] : "true") + " ---> " +
-					(instrumentationData.postconds.length > 0 ? instrumentationData.postconds[0] : "true") + "\";");
-			methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(1, stmt));			
+			return methodDeclaration;
+		} catch (Exception e) {
+			log.error("* Method " + configuration.getTargetClass() + "." + instrumentationData.method.getSignature() + 
+					": Issue while compiling spec into corresponding evaluator: " + 
+					"PRECONDS = " + Arrays.toString(instrumentationData.preconds) + " --- " +
+					"POSTCONDS = " + Arrays.toString(instrumentationData.postconds));
+			return methodDeclaration;
 		}
-		return methodDeclaration;
+	}
+	
+	private String escapedQuotes(String s) {
+		return s.replace("\"", "\\\"");
 	}
 
 	private void addExceptionDistanceCalculator(MethodDeclaration methodDeclaration, DocumentedExecutable spec, String exceptionCanonicalName, boolean lookForFailure) {
