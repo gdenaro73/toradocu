@@ -273,6 +273,7 @@ public class TestGeneratorValidation {
 				OperationSpecification os = allSpecs.get(targetMethod);
 				if (os.getPostSpecifications().size() != 0 || os.getThrowsSpecifications().size() != 0) {
 					List<ExpressionStmt> methodCallsToEnrich = identifyMethodCallsToEnrich(cu, targetMethod);
+					addReportCatchSupportVariables(methodCallsToEnrich);
 					ArrayList<Specification> targetSpecs = new ArrayList<>();
 					targetSpecs.addAll(os.getThrowsSpecifications());
 					targetSpecs.addAll(os.getPostSpecifications());
@@ -291,6 +292,7 @@ public class TestGeneratorValidation {
 						}
 						specificationCounter++;
 					}
+					processReportCatchSupportVariables(methodCallsToEnrich);
 				}
 			}
 
@@ -307,6 +309,66 @@ public class TestGeneratorValidation {
 				output.write(cu.toString().getBytes());
 			} catch (IOException e) {
 				log.error("Error while writing the enriched test case to file: " + currentTestCase, e);
+			}
+		}
+	}
+
+	private static void addReportCatchSupportVariables(List<ExpressionStmt> methodCallsToEnrich) {
+		for (ExpressionStmt methodCallToEnrich : methodCallsToEnrich) {
+			// Call for which we shall add the oracle
+			NodeList<Statement> methodCallBlockStmt = null;
+			try {
+				methodCallBlockStmt = ((BlockStmt) methodCallToEnrich.getParentNode().get()).getStatements();
+			} catch (Exception e) {
+				log.error(
+						"Could not find parent node while trying to add support variables used for report in catch block.",
+						e);
+			}
+			Optional<Node> n = methodCallBlockStmt.getParentNode();
+			if (n.isPresent()) {
+				n = n.get().getParentNode();
+				if (n.isPresent() && (n.get() instanceof TryStmt)) {
+					TryStmt ts = (TryStmt) n.get();
+					for (CatchClause cc : ts.getCatchClauses()) {
+						BlockStmt catchBody = cc.getBody();
+						catchBody.addStatement(StaticJavaParser
+								.parseStatement("java.util.HashSet<String> pass = new java.util.HashSet<String>();"));
+						catchBody.addStatement(StaticJavaParser
+								.parseStatement("java.util.HashSet<String> fail = new java.util.HashSet<String>();"));
+						catchBody.addStatement(StaticJavaParser.parseStatement("Throwable raisedEx = null;"));
+					}
+				}
+			}
+		}
+	}
+
+	private static void processReportCatchSupportVariables(List<ExpressionStmt> methodCallsToEnrich) {
+		for (ExpressionStmt methodCallToEnrich : methodCallsToEnrich) {
+			// Call for which we shall add the oracle
+			NodeList<Statement> methodCallBlockStmt = null;
+			try {
+				methodCallBlockStmt = ((BlockStmt) methodCallToEnrich.getParentNode().get()).getStatements();
+			} catch (Exception e) {
+				log.error(
+						"Could not find parent node while trying to process support variables used for report in catch block.",
+						e);
+			}
+			Optional<Node> n = methodCallBlockStmt.getParentNode();
+			if (n.isPresent()) {
+				n = n.get().getParentNode();
+				if (n.isPresent() && (n.get() instanceof TryStmt)) {
+					TryStmt ts = (TryStmt) n.get();
+					for (CatchClause cc : ts.getCatchClauses()) {
+						BlockStmt catchBody = cc.getBody();
+						IfStmt ifstmt = new IfStmt();
+						ifstmt.setCondition(StaticJavaParser.parseExpression("!pass.isEmpty()"));
+						ifstmt.setThenStmt(StaticJavaParser.parseBlock(
+								"{for(String p : pass) {globalGuardsIds_lta.put(p, \"pass\");passedConds++;}}"));
+						ifstmt.setElseStmt(StaticJavaParser.parseBlock(
+								"{for(String f : fail) {globalGuardsIds_lta.put(f, \"fail\");failedConds++;}if (raisedEx !=  null) {throw raisedEx;}}"));
+						catchBody.addStatement(ifstmt);
+					}
+				}
 			}
 		}
 	}
@@ -506,15 +568,13 @@ public class TestGeneratorValidation {
 					thenIfContractStatus.setCondition(StaticJavaParser.parseExpression(
 							"!globalGuardsIds_lta.get(\"" + specificationCounter + "\").equals(\"fail\")"));
 					BlockStmt thenThenIfContractStatus = new BlockStmt();
-					thenThenIfContractStatus.addStatement(StaticJavaParser
-							.parseStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"pass\");"));
-					thenThenIfContractStatus.addStatement("passedConds++;");
+					thenThenIfContractStatus.addStatement(
+							StaticJavaParser.parseStatement("pass.add(\"" + specificationCounter + "\");"));
 					thenIfContractStatus.setThenStmt(thenThenIfContractStatus);
 					ifContractStatus.setThenStmt(new BlockStmt().addStatement(thenIfContractStatus));
 					BlockStmt elseIfContractStatus = new BlockStmt();
-					elseIfContractStatus.addStatement(StaticJavaParser
-							.parseStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"fail\");"));
-					elseIfContractStatus.addStatement(StaticJavaParser.parseStatement("failedConds++;"));
+					elseIfContractStatus.addStatement(
+							StaticJavaParser.parseStatement("fail.add(\"" + specificationCounter + "\");"));
 					ifContractStatus.setElseStmt(elseIfContractStatus);
 					BlockStmt thenIfUniqueGuard = new BlockStmt();
 					thenIfUniqueGuard.addStatement(ifContractStatus);
@@ -524,7 +584,22 @@ public class TestGeneratorValidation {
 
 					String comment2 = "Automatically generated test oracle:" + postCond.getDescription();
 					ifUniqueGuard.setLineComment(comment2);
-					bs.addStatement(ifUniqueGuard);
+
+					// Surround the block with try catch to prevent premature end of test cases
+					// execution due to unsatisfied guard postcond exception check that lead to the
+					// raising of an exception/error. This is done to prevent raising exceptions
+					// when multiple preconditions are satisfied.
+					TryStmt tryCatchGuard = new TryStmt();
+					tryCatchGuard.setTryBlock(new BlockStmt().addStatement(ifUniqueGuard));
+					CatchClause ccGuard = new CatchClause()
+							.setParameter(new Parameter().setType("Throwable").setName("condEx"));
+					ccGuard.setBody(
+							new BlockStmt().addStatement(StaticJavaParser.parseStatement("raisedEx = condEx;")));
+					NodeList<CatchClause> ccsGuard = new NodeList<CatchClause>();
+					ccsGuard.add(ccGuard);
+					tryCatchGuard.setCatchClauses(ccsGuard);
+
+					bs.addStatement(tryCatchGuard);
 					cc.setBody(bs);
 				}
 			}
@@ -643,12 +718,26 @@ public class TestGeneratorValidation {
 				TryStmt ts = (TryStmt) n.get();
 				for (CatchClause cc : ts.getCatchClauses()) {
 					BlockStmt bs = cc.getBody();
-					Statement assertStmt2 = StaticJavaParser.parseStatement("if(uniqueGuardIds_lta.contains(\""
-							+ identifier + "\")) {failedConds++;globalGuardsIds_lta.put(\"" + specificationCounter
-							+ "\",\"fail\");org.junit.Assert.fail();}");
+					Statement assertStmt2 = StaticJavaParser
+							.parseStatement("if(uniqueGuardIds_lta.contains(\"" + identifier + "\")) {fail.add(\""
+									+ specificationCounter + "\");org.junit.Assert.fail();}");
 					String comment2 = "Automatically generated test oracle:" + postCond.getDescription();
 					assertStmt2.setLineComment(comment2);
-					bs.addStatement(assertStmt2);
+
+					// Surround the block with try catch to prevent premature end of test cases
+					// execution due to unsatisfied guard postcond exception check that lead to the
+					// raising of an exception/error. This is done to prevent raising exceptions
+					// when multiple preconditions are satisfied.
+					TryStmt tryCatchFail = new TryStmt();
+					tryCatchFail.setTryBlock(new BlockStmt().addStatement(assertStmt2));
+					CatchClause ccFail = new CatchClause()
+							.setParameter(new Parameter().setType("Throwable").setName("condEx"));
+					ccFail.setBody(new BlockStmt().addStatement(StaticJavaParser.parseStatement("raisedEx = condEx;")));
+					NodeList<CatchClause> ccsFail = new NodeList<CatchClause>();
+					ccsFail.add(ccFail);
+					tryCatchFail.setCatchClauses(ccsFail);
+
+					bs.addStatement(tryCatchFail);
 					cc.setBody(bs);
 				}
 			}
