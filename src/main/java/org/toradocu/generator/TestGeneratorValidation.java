@@ -10,6 +10,7 @@ import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.comments.LineComment;
 import com.github.javaparser.ast.expr.ArrayCreationExpr;
 import com.github.javaparser.ast.expr.ArrayInitializerExpr;
@@ -382,17 +383,8 @@ public class TestGeneratorValidation {
 				existingPrecondChecks.put(i, fill);
 			}
 
-			// In case exceptions are present, for all guards we must add as a mutually
-			// exclusive check all the guards of the other throws (or all throws in case of
-			// returns)
-			String clause = "";
-			for (ThrowsSpecification ts : associatedThowSpecs) {
-				if ((spec instanceof ThrowsSpecification) && !ts.equals(spec))
-					clause = composePartialGuardClause(ts, targetCall, targetMethodName, clause);
-			}
-
 			// Add postcondition oracle guard
-			clause = composeGuardClause(spec, targetCall, targetMethodName, clause);
+			String clause = composeGuardClause(spec, targetCall, targetMethodName, "");
 			// Skip unmodeled guard
 			if (clause.contains("SKIP_UNMODELED")) {
 				String comment = "Skipped check due to unmodeled guard: " + spec.getGuard() + " "
@@ -457,6 +449,7 @@ public class TestGeneratorValidation {
 	private static void addIfGuard(String clause, ExpressionStmt targetCall, Type targetCallReturnType,
 			NodeList<Statement> insertionPoint, int identifier, String guardsComment) {
 		if (!clause.isEmpty()) {
+			// Generated the if block containing the guard check
 			Expression clauseExp = StaticJavaParser.parseExpression(clause);
 			IfStmt i = new IfStmt();
 			i.setCondition(clauseExp);
@@ -468,7 +461,20 @@ public class TestGeneratorValidation {
 			bs.addStatement(mce);
 			i.setThenStmt(bs);
 			i.setLineComment(guardsComment);
-			insertionPoint.add(i);
+
+			// Surround the block with try catch to prevent premature end of test cases
+			// execution due to unsatisfied guard check that lead to the raising of an
+			// exception/error
+			TryStmt tryCatchGuard = new TryStmt();
+			tryCatchGuard.setTryBlock(new BlockStmt().addStatement(i));
+			CatchClause ccGuard = new CatchClause()
+					.setParameter(new Parameter().setType("Throwable").setName("condEx"));
+			NodeList<CatchClause> ccsGuard = new NodeList<CatchClause>();
+			ccsGuard.add(ccGuard);
+			tryCatchGuard.setCatchClauses(ccsGuard);
+
+			// Add the generated guard to the test case code
+			insertionPoint.add(tryCatchGuard);
 		}
 	}
 
@@ -605,10 +611,31 @@ public class TestGeneratorValidation {
 		thenIfUniqueGuard.addStatement(ifContractStatus);
 		thenIfUniqueGuard.addStatement("org.junit.Assert.assertTrue(" + oracle + ");");
 		ifUniqueGuard.setThenStmt(thenIfUniqueGuard);
-
 		String comment = "Automatically generated test oracle:" + postCond.getDescription();
 		ifUniqueGuard.setLineComment(comment);
-		insertionPoint.addAfter(ifUniqueGuard, targetCallToConsider);
+
+		// Surround the block with try catch to prevent premature end of test cases
+		// execution due to unsatisfied guard postcond check that lead to the raising of
+		// an exception/error. This should happen only in the case of Toradocu creating
+		// a faulty assertion
+		TryStmt tryCatchGuard = new TryStmt();
+		tryCatchGuard.setTryBlock(new BlockStmt().addStatement(ifUniqueGuard));
+		CatchClause ccGuard = new CatchClause().setParameter(new Parameter().setType("Throwable").setName("condEx"));
+		IfStmt ifCatchBody = new IfStmt();
+		ifCatchBody.setCondition(StaticJavaParser.parseExpression("condEx instanceof java.lang.AssertionError"));
+		ifCatchBody.setThenStmt(StaticJavaParser.parseStatement("throw condEx;"));
+		ccGuard.setBody(new BlockStmt().addStatement(ifCatchBody));
+		NodeList<CatchClause> ccsGuard = new NodeList<CatchClause>();
+		ccsGuard.add(ccGuard);
+		tryCatchGuard.setCatchClauses(ccsGuard);
+
+		// Add the postcondition guard check to the test case
+		insertionPoint.addAfter(tryCatchGuard, targetCallToConsider);
+
+		// If the method invoked in the test case is surrounded with a try catch block
+		// we need to add the postcondition check inside of the catch block and rise an
+		// error if the guard was satisfied, since no exception should be raised for
+		// assertion checks
 		Optional<Node> n = insertionPoint.getParentNode();
 		if (n.isPresent()) {
 			n = n.get().getParentNode();
@@ -627,31 +654,6 @@ public class TestGeneratorValidation {
 			}
 		}
 		return targetCallToConsider;
-	}
-
-	private static String composePartialGuardClause(Specification spec, ExpressionStmt targetCall,
-			String targetMethodName, String existingClause) {
-		String guard = spec.getGuard().getConditionText();
-		String condToAssume = null;
-		if (guard != null && !guard.isEmpty()) {
-			condToAssume = replaceFormalParamsWithActualValues(guard, targetCall);
-		} else if (!(spec instanceof PreSpecification)) {
-			if (!spec.getGuard().getDescription().isEmpty()) {
-				return existingClause;
-			} else {
-				// According to Toradocu, this oracle has no guard (no condition/description
-				// were identified)
-				condToAssume = "!(true)";
-			}
-		}
-		if (condToAssume != null) {
-			if (existingClause.isEmpty()) {
-				existingClause = "!(" + condToAssume + ")";
-			} else {
-				existingClause = existingClause + "&&" + "!(" + condToAssume + ")";
-			}
-		}
-		return existingClause;
 	}
 
 	private static String composeGuardClause(Specification spec, ExpressionStmt targetCall, String targetMethodName,
