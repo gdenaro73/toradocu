@@ -3,6 +3,7 @@ package org.toradocu.generator;
 import static org.toradocu.Toradocu.configuration;
 
 import com.github.javaparser.StaticJavaParser;
+import com.github.javaparser.ast.ArrayCreationLevel;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.Modifier.Keyword;
@@ -244,12 +245,17 @@ public class TestGeneratorValidation {
 			// Add contracts method
 			MethodDeclaration mdContracts = clax.addMethod("contracts", Modifier.Keyword.PUBLIC,
 					Modifier.Keyword.STATIC);
-			mdContracts.setType("String []");
+			mdContracts.setType("String [][]");
 			BlockStmt contractsBlock = mdContracts.createBody();
 			ReturnStmt returnContractsStmt = new ReturnStmt();
 			contractsBlock.addStatement(returnContractsStmt);
 			ArrayCreationExpr contractsArray = new ArrayCreationExpr();
 			contractsArray.setElementType("String");
+			ArrayCreationLevel level = new ArrayCreationLevel();
+			NodeList<ArrayCreationLevel> levels = new NodeList<ArrayCreationLevel>();
+			levels.add(level);
+			levels.add(level);
+			contractsArray.setLevels(levels);
 			ArrayInitializerExpr contractsArrayInit = new ArrayInitializerExpr();
 			contractsArray.setInitializer(contractsArrayInit);
 			returnContractsStmt.setExpression(contractsArray);
@@ -279,7 +285,13 @@ public class TestGeneratorValidation {
 					targetSpecs.addAll(os.getPostSpecifications());
 					HashMap<Integer, HashMap<String, IfStmt>> existingPrecondChecks = new HashMap<Integer, HashMap<String, IfStmt>>();
 					for (Specification spec : targetSpecs) {
-						contracts.add(new StringLiteralExpr(StringEscapeUtils.escapeJava(spec.toString())));
+						StringLiteralExpr method = new StringLiteralExpr(targetMethod.getSignature());
+						StringLiteralExpr contr = new StringLiteralExpr(StringEscapeUtils.escapeJava(spec.toString()));
+						NodeList<Expression> mc = new NodeList<Expression>();
+						mc.add(method);
+						mc.add(contr);
+						ArrayInitializerExpr methodContractInit = new ArrayInitializerExpr(mc);
+						contracts.add(methodContractInit);
 						if (methodCallsToEnrich.size() != 0) {
 							bs.addStatement(
 									"globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"not-executed\");");
