@@ -14,7 +14,11 @@ import com.github.javaparser.ast.visitor.ModifierVisitor;
 
 import static org.toradocu.Toradocu.configuration;
 
+import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
+import java.lang.reflect.WildcardType;
 import java.util.Arrays;
 
 import org.jetbrains.annotations.NotNull;
@@ -235,7 +239,7 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		}
 
 		// Casting of result object in condition.
-		String returnType = method.getReturnType().getType().getTypeName();
+		String returnType = simpleTypeName(method.getReturnType().getType());
 		returnType = removeParametersFromType(returnType).replace('$', '.');
 		if (!returnType.equals("void")) {
 			condition =
@@ -253,6 +257,19 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		return condition;
 	}
 
+	private static String simpleTypeName(Type type) {
+		if (type instanceof TypeVariable) {
+			return "java.lang.Object";
+		} else if (type instanceof WildcardType) {
+			//TODO: shall we consider the lowerbound type? ((WildcardType) type).getLowerBounds();
+			return "java.lang.Object";
+		} else if (type instanceof GenericArrayType) {
+			return simpleTypeName(((GenericArrayType) type).getGenericComponentType()) + "[]";
+		} else {
+			return type.getTypeName();
+		}
+	}
+
 	/**
 	 * Remove the type parameter(s) from a generic type and returns the resulting string.
 	 *
@@ -263,7 +280,7 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 	private static String removeParametersFromType(String genericType) {
 		int generics = genericType.indexOf("<");
 		if (generics != -1) {
-			return genericType.substring(0, generics);
+			return genericType.substring(0, generics) + genericType.substring(genericType.lastIndexOf(">") + 1);
 		}
 		return genericType;
 	}
