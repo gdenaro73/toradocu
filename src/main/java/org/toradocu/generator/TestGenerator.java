@@ -131,12 +131,8 @@ public class TestGenerator {
 			classpathTarget += ":" + cp.getPath();
 		}
 		int evaluatorNumber = 0;
-		Stack<Pair<String, Map<String, Pair<DocumentedExecutable, Specification>>>> evaluatorDefsForEvosuite = new Stack<>(); // <evaluatorDefs,
-																																// map:
-																																// test
-																																// case
-																																// -->
-																																// assertion>
+		Stack<Pair<String, Map<String, Pair<DocumentedExecutable, Specification>>>> evaluatorDefsForEvosuite = new Stack<>();
+		// <evaluatorDefs, map: test case --> assertion>
 		for (DocumentedExecutable method : specifications.keySet()) {
 			String formattedMethodSignature = bytecodeStyleSignature(method);
 			String packageName = method.getDeclaringClass().getPackage().getName();
@@ -256,9 +252,8 @@ public class TestGenerator {
 
 				// We then generate the 2 evaluators that refer to the guards and the postconds
 				if (evaluatorNumber % MAX_EVALUATORS_PER_EVOSUITE_CALL == 0) {
-					evaluatorDefsForEvosuite.push(Pair.of("", new HashMap<>())); // starts a new group of
-																					// <evaluatorDefs, test case
-																					// assertions>
+					evaluatorDefsForEvosuite.push(Pair.of("", new HashMap<>()));
+					// starts a new group of <evaluatorDefs, test case assertions>
 				}
 				boolean unmodeled = unmodeledGuard || postCond.isEmpty();
 				final String evaluatorBaseName = "EvoSuiteEvaluator_" + (evaluatorNumber + 1);
@@ -283,21 +278,9 @@ public class TestGenerator {
 					createEvaluator(method, guards.toArray(new String[0]), postconds, true, evaluatorForViolationName,
 							evaluatorsDir, classpathTarget);
 					TestGeneratorSummaryData._I().incGeneratedNegativeEvaluators();
-					evaluatorDefsForEvosuite.peek().getRight().put(testForViolationName, Pair.of(method, spec)); // spec
-																													// for
-																													// defining
-																													// the
-																													// assertion,
-																													// when
-																													// (and
-																													// if)
-																													// we
-																													// generate
-																													// the
-																													// test
-																													// case
-																													// later
-																													// on
+					evaluatorDefsForEvosuite.peek().getRight().put(testForViolationName, Pair.of(method, spec));
+					// spec for defining the assertion, when (and if) we generate the test case
+					// later on
 					evaluatorDef += ":" + method.getDeclaringClass().getCanonicalName() + "," + formattedMethodSignature
 							+ "," + (packageName.isEmpty() ? "" : packageName + ".") + evaluatorForViolationName;
 					/*
@@ -327,6 +310,7 @@ public class TestGenerator {
 		} else {
 			log.info("Did not find any oracles for which test cases shall be generated");
 		}
+		GuidedGenerationReport reportGeneration = new GuidedGenerationReport();
 		for (int i = 0; i < evaluatorDefsForEvosuite.size(); ++i) {
 			// Launch EvoSuite
 			List<String> evosuiteCommand = buildEvoSuiteCommand(evaluatorDefsForEvosuite.get(i).getLeft(),
@@ -355,9 +339,11 @@ public class TestGenerator {
 			for (String testName : assertionsToAddInTestCases.keySet()) {
 				Pair<DocumentedExecutable, Specification> specData = assertionsToAddInTestCases.get(testName);
 				enrichTestWithOracle(testsDir, testName, specData.getLeft(), specData.getRight(), specifications);
+				reportGeneration.buildReport(testsDir, testName, configuration.getTargetClass(),
+						specData.getLeft().getSignature(), specData.getRight());
 			}
 		}
-
+		reportGeneration.generateReport();
 	}
 
 	private static void enrichTestWithOracle(Path testsDir, String testName, DocumentedExecutable targetMethod,
