@@ -30,6 +30,7 @@ import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -42,6 +43,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Stack;
 
 import javax.tools.JavaCompiler;
@@ -311,7 +313,15 @@ public class TestGenerator {
 			log.info("Did not find any oracles for which test cases shall be generated");
 		}
 		GuidedGenerationReport reportGeneration = new GuidedGenerationReport();
+		HashMap<String, Integer> evosuiteLaunches = new HashMap<String, Integer>();
 		for (int i = 0; i < evaluatorDefsForEvosuite.size(); ++i) {
+			// Count number of Evosuite launchs per single class and store it
+			if (evosuiteLaunches.containsKey(configuration.getTargetClass())) {
+				int launches = evosuiteLaunches.get(configuration.getTargetClass());
+				evosuiteLaunches.put(configuration.getTargetClass(), launches + 1);
+			} else {
+				evosuiteLaunches.put(configuration.getTargetClass(), 1);
+			}
 			// Launch EvoSuite
 			List<String> evosuiteCommand = buildEvoSuiteCommand(evaluatorDefsForEvosuite.get(i).getLeft(),
 					evaluatorsDir, testsDir);
@@ -343,7 +353,40 @@ public class TestGenerator {
 						specData.getLeft().getSignature(), specData.getRight());
 			}
 		}
+		// Store number of Evosuite launches in csv file
+		numberOfEvosuiteLaunchesPerClassToCSV(evosuiteLaunches);
+		// Generate report
 		reportGeneration.generateReport();
+	}
+
+	private static void numberOfEvosuiteLaunchesPerClassToCSV(HashMap<String, Integer> evosuiteLaunches)
+			throws IOException {
+		File myObj = new File("numberOfEvosuiteLaunches.csv");
+		if (!myObj.exists()) {
+			myObj.createNewFile();
+			try {
+				FileWriter myWriter = new FileWriter(myObj);
+				myWriter.write("class" + ";" + "launches" + System.lineSeparator());
+				myWriter.close();
+			} catch (IOException e) {
+				log.error(
+						"An error occurred during the creation of the csv file containing the number of times Evosuite is launched per class.",
+						e);
+			}
+		}
+		for (Entry<String, Integer> launch : evosuiteLaunches.entrySet()) {
+			String clax = launch.getKey();
+			int numberOfLaunches = launch.getValue();
+			try {
+				FileWriter myWriter = new FileWriter(myObj, true);
+				myWriter.write("\"" + clax + "\"" + ";" + numberOfLaunches + System.lineSeparator());
+				myWriter.close();
+			} catch (IOException e) {
+				log.error(
+						"An error occurred during the filling of the csv file containing the number of times Evosuite is launched per class.",
+						e);
+			}
+		}
 	}
 
 	private static void enrichTestWithOracle(Path testsDir, String testName, DocumentedExecutable targetMethod,
