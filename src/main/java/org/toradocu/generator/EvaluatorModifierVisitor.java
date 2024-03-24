@@ -6,9 +6,11 @@ import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.BinaryExpr.Operator;
 import com.github.javaparser.ast.expr.BooleanLiteralExpr;
+import com.github.javaparser.ast.expr.CastExpr;
 import com.github.javaparser.ast.expr.DoubleLiteralExpr;
 import com.github.javaparser.ast.expr.EnclosedExpr;
 import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.expr.UnaryExpr;
 import com.github.javaparser.ast.stmt.Statement;
 import com.github.javaparser.ast.visitor.ModifierVisitor;
 
@@ -19,6 +21,7 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
+import java.util.ArrayList;
 import java.util.Arrays;
 
 import org.jetbrains.annotations.NotNull;
@@ -47,8 +50,9 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		private final DocumentedExecutable method;
 		private final String[] preconds;
 		private final String[] postconds;
+		private final boolean isThrows;
 		private final boolean lookForPostCondViolation;
-		InstrumentationData(DocumentedExecutable method, String[] preconds, String[] postconds, boolean lookForPostCondViolation) {
+		InstrumentationData(DocumentedExecutable method, String[] preconds, String[] postconds, boolean isThrows, boolean lookForPostCondViolation) {
 			Checks.nonNullParameter(method, "method");
 			Checks.nonNullParameter(preconds, "preconds");
 			Checks.nonNullParameter(postconds, "postconds");
@@ -56,6 +60,7 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 			this.method = method;
 			this.preconds = preconds;
 			this.postconds = postconds;
+			this.isThrows = isThrows;
 			this.lookForPostCondViolation = lookForPostCondViolation;
 		}
 	}
@@ -82,7 +87,7 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 			if (methodName.equals("populateCalculators_preconds")) {
 				addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.preconds, false);    		
 			} else if (methodName.equals("populateCalculators_postconds") && instrumentationData.postconds.length > 0) {
-				if (instrumentationData.postconds.length == 1 && instrumentationData.postconds[0].endsWith("Exception")) {
+				if (instrumentationData.isThrows) {
 					addExceptionDistanceCalculator(methodDeclaration, instrumentationData.method, instrumentationData.postconds[0], instrumentationData.lookForPostCondViolation);    		
 				} else {
 					addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.postconds, instrumentationData.lookForPostCondViolation);    		
@@ -202,12 +207,30 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 					default: throw new RuntimeException("Unexpected comparison op in: " + cond);
 					}
 				}
-				boolean constantDistance = 
-						(turnedOp == Operator.NOT_EQUALS) || 
-						(turnedOp == Operator.EQUALS && (left.isNullLiteralExpr() || right.isNullLiteralExpr()));
+				boolean constantDistance = turnedOp == Operator.NOT_EQUALS;
+				if (!constantDistance && turnedOp == Operator.EQUALS) {
+					//check if it is == for comparing references
+					ArrayList<Expression> wl = new ArrayList<>();
+					wl.add(left);
+					wl.add(right);
+					for (Expression e: wl) {
+						while (e.isEnclosedExpr()) {
+							e = e.asEnclosedExpr().getInner();
+						}
+						if (e.isNullLiteralExpr() || e.isFieldAccessExpr() || 
+								(e.isCastExpr() && !e.asCastExpr().getType().isPrimitiveType())) {
+							constantDistance = true;
+							break;
+						}
+					}
+				}
+				
 				if (constantDistance) {
 					return new DoubleLiteralExpr(1);				  
 				} else {
+					if (turnedOp == Operator.EQUALS) {
+						toString();
+					}
 					BinaryExpr distance = new BinaryExpr(new EnclosedExpr(left), new EnclosedExpr(right), Operator.MINUS);
 					return distance;
 				}

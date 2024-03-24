@@ -262,7 +262,7 @@ public class TestGenerator {
 				// postcondition
 				final String evaluatorName = evaluatorBaseName + (unmodeled ? "_unmodeled" : "");
 				final String testName = testBaseName + (unmodeled ? "_unmodeled" : "") + "_Test";
-				createEvaluator(method, guards.toArray(new String[0]), postconds, false, evaluatorName, evaluatorsDir,
+				createEvaluator(method, guards.toArray(new String[0]), postconds, spec instanceof ThrowsSpecification, false, evaluatorName, evaluatorsDir,
 						classpathTarget);
 				TestGeneratorSummaryData._I().incGeneratedPositiveEvaluators();
 				// spec for defining the assertion, when (and if) we generate the test case
@@ -275,7 +275,7 @@ public class TestGenerator {
 				if (!unmodeled) {
 					final String evaluatorForViolationName = evaluatorBaseName + "_failure";
 					final String testForViolationName = testBaseName + "_failure_Test";
-					createEvaluator(method, guards.toArray(new String[0]), postconds, true, evaluatorForViolationName,
+					createEvaluator(method, guards.toArray(new String[0]), postconds, spec instanceof ThrowsSpecification, true, evaluatorForViolationName,
 							evaluatorsDir, classpathTarget);
 					TestGeneratorSummaryData._I().incGeneratedNegativeEvaluators();
 					evaluatorDefsForEvosuite.peek().getRight().put(testForViolationName, Pair.of(method, spec));
@@ -806,7 +806,7 @@ public class TestGenerator {
 	 * @param classpathForCompilation
 	 * @param lookForPostCondViolation
 	 */
-	private static void createEvaluator(DocumentedExecutable method, String guards[], String postConds[],
+	private static void createEvaluator(DocumentedExecutable method, String guards[], String postConds[], boolean isThrows,
 			boolean lookForPostCondViolation, String evaluatorName, Path outputDir, String classpathForCompilation) {
 		Checks.nonNullParameter(method, "method");
 		Checks.nonNullParameter(guards, "guardStrings");
@@ -827,7 +827,7 @@ public class TestGenerator {
 
 		// Customize and emit the evaluator
 		new EvaluatorModifierVisitor().visit(cu,
-				new EvaluatorModifierVisitor.InstrumentationData(method, guards, postConds, lookForPostCondViolation));
+				new EvaluatorModifierVisitor.InstrumentationData(method, guards, postConds, isThrows, lookForPostCondViolation));
 		final Path evaluatorFolder = outputDir.resolve(packageName.replace('.', '/'));
 		final Path evaluatorPath = evaluatorFolder.resolve(evaluatorName + ".java");
 		try (FileOutputStream output = new FileOutputStream(new File(evaluatorPath.toString()))) {
