@@ -2,6 +2,7 @@ package org.toradocu.generator;
 
 import static org.toradocu.Toradocu.configuration;
 
+import com.github.javaparser.ParseProblemException;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.NodeList;
@@ -264,8 +265,8 @@ public class TestGenerator {
 				// postcondition
 				final String evaluatorName = evaluatorBaseName + (unmodeled ? "_unmodeled" : "");
 				final String testName = testBaseName + (unmodeled ? "_unmodeled" : "") + "_Test";
-				createEvaluator(method, guards.toArray(new String[0]), postconds, spec instanceof ThrowsSpecification, false, evaluatorName, evaluatorsDir,
-						classpathTarget);
+				createEvaluator(method, guards.toArray(new String[0]), postconds, spec instanceof ThrowsSpecification,
+						false, evaluatorName, evaluatorsDir, classpathTarget);
 				TestGeneratorSummaryData._I().incGeneratedPositiveEvaluators();
 				// spec for defining the assertion, when (and if) we generate the test case
 				// later on
@@ -277,8 +278,9 @@ public class TestGenerator {
 				if (!unmodeled) {
 					final String evaluatorForViolationName = evaluatorBaseName + "_failure";
 					final String testForViolationName = testBaseName + "_failure_Test";
-					createEvaluator(method, guards.toArray(new String[0]), postconds, spec instanceof ThrowsSpecification, true, evaluatorForViolationName,
-							evaluatorsDir, classpathTarget);
+					createEvaluator(method, guards.toArray(new String[0]), postconds,
+							spec instanceof ThrowsSpecification, true, evaluatorForViolationName, evaluatorsDir,
+							classpathTarget);
 					TestGeneratorSummaryData._I().incGeneratedNegativeEvaluators();
 					evaluatorDefsForEvosuite.peek().getRight().put(testForViolationName, Pair.of(method, spec));
 					// spec for defining the assertion, when (and if) we generate the test case
@@ -348,9 +350,15 @@ public class TestGenerator {
 					.get(i).getRight();
 			for (String testName : assertionsToAddInTestCases.keySet()) {
 				Pair<DocumentedExecutable, Specification> specData = assertionsToAddInTestCases.get(testName);
-				enrichTestWithOracle(testsDir, testName, specData.getLeft(), specData.getRight(), specifications);
-				reportGeneration.buildReport(testsDir, testName, configuration.getTargetClass(),
-						specData.getLeft().getSignature(), specData.getRight());
+				try {
+					enrichTestWithOracle(testsDir, testName, specData.getLeft(), specData.getRight(), specifications);
+					reportGeneration.buildReport(testsDir, testName, configuration.getTargetClass(),
+							specData.getLeft().getSignature(), specData.getRight());
+				} catch (ParseProblemException e) {
+					log.error(
+							"Error during parsing. This probably means that a generated test case contains some compilation errors.",
+							e);
+				}
 			}
 		}
 		// Store number of Evosuite launches in csv file
@@ -411,7 +419,7 @@ public class TestGenerator {
 		try {
 			cu = StaticJavaParser.parse(currentTestCase);
 		} catch (FileNotFoundException e) {
-			e.printStackTrace();
+			log.error("Test case not found while trying to parse it.", e);
 		}
 
 		// In any case: throw an exception if a failure-driven test case completed
@@ -849,8 +857,9 @@ public class TestGenerator {
 	 * @param classpathForCompilation
 	 * @param lookForPostCondViolation
 	 */
-	private static void createEvaluator(DocumentedExecutable method, String guards[], String postConds[], boolean isThrows,
-			boolean lookForPostCondViolation, String evaluatorName, Path outputDir, String classpathForCompilation) {
+	private static void createEvaluator(DocumentedExecutable method, String guards[], String postConds[],
+			boolean isThrows, boolean lookForPostCondViolation, String evaluatorName, Path outputDir,
+			String classpathForCompilation) {
 		Checks.nonNullParameter(method, "method");
 		Checks.nonNullParameter(guards, "guardStrings");
 		Checks.nonNullParameter(evaluatorName, "evaluatorName");
@@ -869,8 +878,8 @@ public class TestGenerator {
 				.ifPresent(c -> c.setName(evaluatorName));
 
 		// Customize and emit the evaluator
-		new EvaluatorModifierVisitor().visit(cu,
-				new EvaluatorModifierVisitor.InstrumentationData(method, guards, postConds, isThrows, lookForPostCondViolation));
+		new EvaluatorModifierVisitor().visit(cu, new EvaluatorModifierVisitor.InstrumentationData(method, guards,
+				postConds, isThrows, lookForPostCondViolation));
 		final Path evaluatorFolder = outputDir.resolve(packageName.replace('.', '/'));
 		final Path evaluatorPath = evaluatorFolder.resolve(evaluatorName + ".java");
 		try (FileOutputStream output = new FileOutputStream(new File(evaluatorPath.toString()))) {
