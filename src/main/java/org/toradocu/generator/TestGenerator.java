@@ -317,6 +317,18 @@ public class TestGenerator {
 		GuidedGenerationReport reportGeneration = new GuidedGenerationReport();
 		HashMap<String, Integer> evosuiteLaunches = new HashMap<String, Integer>();
 		for (int i = 0; i < evaluatorDefsForEvosuite.size(); ++i) {
+			int evosuiteBudget = evaluatorDefsForEvosuite.get(i).getRight().size() * configuration.getEvoSuiteBudget();
+			evosuiteBudget = evosuiteBudget < 60 ? 60 : evosuiteBudget;
+			
+			// Count Evosuite budget per single class and store it
+			if (evosuiteLaunches.containsKey(configuration.getTargetClass())) {
+				int tmpBudget = evosuiteLaunches.get(configuration.getTargetClass());
+				evosuiteLaunches.put(configuration.getTargetClass(), tmpBudget + evosuiteBudget);
+			} else {
+				evosuiteLaunches.put(configuration.getTargetClass(), evosuiteBudget);
+			}
+					
+			/*
 			// Count number of Evosuite launchs per single class and store it
 			if (evosuiteLaunches.containsKey(configuration.getTargetClass())) {
 				int launches = evosuiteLaunches.get(configuration.getTargetClass());
@@ -324,9 +336,11 @@ public class TestGenerator {
 			} else {
 				evosuiteLaunches.put(configuration.getTargetClass(), 1);
 			}
+			*/
+
 			// Launch EvoSuite
 			List<String> evosuiteCommand = buildEvoSuiteCommand(evaluatorDefsForEvosuite.get(i).getLeft(),
-					evaluatorsDir, testsDir);
+					evaluatorsDir, testsDir, evosuiteBudget);
 			final Path evosuiteLogFilePath = evaluatorsDir.resolve("evosuite-log-" + i + ".txt");
 			try {
 				Process processEvosuite = launchProcess(evosuiteCommand, evosuiteLogFilePath);
@@ -773,7 +787,7 @@ public class TestGenerator {
 	 *         {@link List}{@code <}{@link String}{@code >}, suitable to be passed
 	 *         to a {@link ProcessBuilder}.
 	 */
-	private static List<String> buildEvoSuiteCommand(String evaluatorDefsForEvoSuite, Path outputDir, Path testsDir) {
+	private static List<String> buildEvoSuiteCommand(String evaluatorDefsForEvoSuite, Path outputDir, Path testsDir, int evosuiteBudget) {
 		final String targetClass = configuration.getTargetClass();
 		final List<String> retVal = new ArrayList<String>();
 		String classpathTarget = outputDir.toString();
@@ -791,7 +805,8 @@ public class TestGenerator {
 		retVal.add("-DCP=" + classpathTarget);
 		retVal.add("-Dassertions=false");
 		// retVal.add("-Dglobal_timeout=" + configuration.getEvoSuiteBudget());
-		retVal.add("-Dsearch_budget=" + configuration.getEvoSuiteBudget());
+		//retVal.add("-Dsearch_budget=" + configuration.getEvoSuiteBudget());
+		retVal.add("-Dsearch_budget=" + evosuiteBudget);
 		retVal.add("-Dreport_dir=" + outputDir);
 		retVal.add("-Dtest_dir=" + testsDir);
 		retVal.add("-Dvirtual_fs=false");
