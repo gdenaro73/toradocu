@@ -39,16 +39,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Stack;
 
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang3.tuple.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.toradocu.extractor.Comment;
@@ -78,6 +75,50 @@ public class TestGenerator {
 
 	/** {@code Logger} for this class. */
 	private static final Logger log = LoggerFactory.getLogger(TestGenerator.class);
+	
+	private static class TestCaseInfo {
+		String testName;
+		DocumentedExecutable focalMethod;
+		Specification focalContract;
+		TestCaseInfo(String testName, DocumentedExecutable focalMethod, Specification focalContract) {
+			this.testName = testName;
+			this.focalMethod = focalMethod;
+			this.focalContract = focalContract;
+		}
+	}
+
+	private static class EvaluatorDef {
+		String evaluatorClassName;
+		String targetClassName;
+		String targetMethodName;
+		EvaluatorDef(String evaluatorClassName, String targetClassName, DocumentedExecutable method) {
+			this.evaluatorClassName = evaluatorClassName;
+			this.targetClassName = targetClassName;
+			this.targetMethodName = bytecodeStyleSignature(method);
+		}
+		String asEvosuiteParameter() {
+			return targetClassName + "," + targetMethodName + "," + evaluatorClassName;
+		}
+	}
+
+	private static class EvaluatorGroup {
+		ArrayList<EvaluatorDef> evaluatorParamDefs = new ArrayList<>();
+		ArrayList<TestCaseInfo> expectedTestCases = new ArrayList<>();
+		String asEvosuiteParameter() {
+			if (evaluatorParamDefs.isEmpty()) {
+				return "";
+			}
+			String s = evaluatorParamDefs.get(0).asEvosuiteParameter();
+			for (int i = 1; i < evaluatorParamDefs.size(); ++i) {
+				s += ":" + evaluatorParamDefs.get(i).asEvosuiteParameter();
+			}
+			return s;
+		}
+		void addItem(String evaluatorName, String correspondingTestName, DocumentedExecutable method, Specification spec) {
+			evaluatorParamDefs.add(new EvaluatorDef(evaluatorName, method.getDeclaringClass().getCanonicalName(), method));
+			expectedTestCases.add(new TestCaseInfo(correspondingTestName, method, spec));	
+		}
+	}
 
 	/**
 	 * Creates evaluators to allow EvoSuite to check fitness wrt the given
@@ -108,36 +149,32 @@ public class TestGenerator {
 	public static void createTests(Map<DocumentedExecutable, OperationSpecification> specifications)
 			throws IOException {
 		Checks.nonNullParameter(specifications, "specifications");
-
+		if (specifications.isEmpty()) {
+			log.error("Test generation skipedd, as the set of specs is empty");
+			return;
+		}
 		// Create output directory where evaluators are saved.
 		final Path evaluatorsDir = Paths.get(configuration.getTestOutputDir()).resolve(EVALUATORS_FOLDER);
 		final boolean evaluatorsDirCreationSucceeded = createOutputDir(evaluatorsDir.toString(), true);
-		if (!evaluatorsDirCreationSucceeded || specifications.isEmpty()) {
+		if (!evaluatorsDirCreationSucceeded) {
 			log.error("Test generation failed, cannot create dir:" + evaluatorsDir);
 			return;
 		}
-
 		// Create output directory where test cases are saved.
 		final Path testsDir = Paths.get(configuration.getTestOutputDir()).resolve(TESTCASES_FOLDER);
 		final boolean testsDirCreationSucceeded = createOutputDir(testsDir.toString(), true);
-		if (!testsDirCreationSucceeded || specifications.isEmpty()) {
+		if (!testsDirCreationSucceeded) {
 			log.error("Test generation failed, cannot create dir:" + testsDir);
 			return;
 		}
 
 		// Step 1/3: Create evaluators
-		String classpathTarget = ".";
-		for (URL cp : configuration.classDirs) {
-			classpathTarget += ":" + cp.getPath();
-		}
 		int evaluatorNumber = 0;
-		Stack<Pair<String, Map<String, Pair<DocumentedExecutable, Specification>>>> evaluatorDefsForEvosuite = new Stack<>();
-		// <evaluatorDefs, map: test case --> assertion>
+		List<EvaluatorGroup> evaluatorGroups = new ArrayList<>();
+
 		for (DocumentedExecutable method : specifications.keySet()) {
-			String formattedMethodSignature = bytecodeStyleSignature(method);
 			String packageName = method.getDeclaringClass().getPackage().getName();
-			if (!createOutputDir(evaluatorsDir + File.separator + packageName.replace('.', File.separator.charAt(0)),
-					false)) {
+			if (!createOutputDir(evaluatorsDir + File.separator + packageName.replace('.', File.separator.charAt(0)), false)) {
 				throw new RuntimeException(
 						"Problems with creating package dir: " + packageName.replace('.', File.separator.charAt(0)));
 			}
@@ -146,40 +183,22 @@ public class TestGenerator {
 			ArrayList<Specification> targetSpecs = new ArrayList<>();
 			targetSpecs.addAll(specification.getThrowsSpecifications());
 			targetSpecs.addAll(specification.getPostSpecifications());
+			
 			ArrayList<String> guards = new ArrayList<>();
 			for (Specification spec : targetSpecs) {
 				guards.clear();
-				String grd = spec.getGuard().getConditionText();
+				
+				// The perspective test shall satisfy the precondition of the focal spec
 				boolean specGuardEmpty = false;
 				boolean unmodeledGuard = false;
-				if (grd != null && !grd.isEmpty()) {
-					log.debug("* Method " + configuration.getTargetClass() + "." + method.getSignature()
-							+ ": Guarded spec found: " + spec);
-					// The perspective test shall satisfy the guard of the target spec
-					guards.add(grd);
-				} else if (spec.getGuard().getDescription().isEmpty()) {
-					// In this case there is no guard indeed
+				try {
+					guards.add(getGuardAsString(spec, method, targetSpecs));
+				} catch (EmptyGuardException e) {
 					specGuardEmpty = true;
-					log.debug("* Method " + configuration.getTargetClass() + "." + method.getSignature()
-							+ ": Unguarded spec found: " + spec);
-					if (spec instanceof ThrowsSpecification) {
-						if (targetSpecs.size() > 1)
-							log.error("Method " + configuration.getTargetClass() + "." + method.getSignature()
-									+ ": We have " + targetSpecs.size()
-									+ " specs. However, it does not make sense to have more than a spec when there is an unguarded thorws-spec.");
-						log.error("** SPECS ARE: " + targetSpecs);
-						TestGeneratorSummaryData._I().incTestGenerationErrors();
-					}
-				} else {
+				} catch (UnmodeledGuardException e) {
 					unmodeledGuard = true;
-					log.info("* Method " + configuration.getTargetClass() + "." + method.getSignature()
-							+ ": Unmodeled guard found for spec: " + spec);
-					TestGeneratorSummaryData._I().incUnmodeledGuards();
-					// TODO: how do we deal with specs for which there exist a guard, but Toradocu
-					// failed to map the guard to a condition?
-					// At the moment, we try to generate a test case that satisfies the path
-					// condition, but it is not clear if this makes sense.
 				}
+				
 				// The perspective test shall satisfy all preconditions of the method
 				for (PreSpecification precond : specification.getPreSpecifications()) {
 					String precondGuard = precond.getGuard().getConditionText();
@@ -187,6 +206,7 @@ public class TestGenerator {
 						guards.add(precondGuard);
 					}
 				}
+				
 				// The perspective test shall not hit any throws-spec (but the current one, if
 				// the current one is a throws-spec)
 				for (ThrowsSpecification thowsSpec : specification.getThrowsSpecifications()) {
@@ -200,46 +220,8 @@ public class TestGenerator {
 					}
 				}
 
-				// We generate test cases aimed to the target postconditions
-				String postCond;
-				if (spec instanceof PostSpecification) {
-					postCond = ((PostSpecification) spec).getProperty().getConditionText();
-					if (postCond == null || postCond.isEmpty()) {
-						if (((PostSpecification) spec).getProperty().getDescription().isEmpty()) {
-							log.error("* Method " + configuration.getTargetClass() + "." + method.getSignature()
-									+ ": Post conditions has empty property for spec: " + spec);
-							TestGeneratorSummaryData._I().incEmptyPostConditions();
-						} else {
-							log.info("* Method " + configuration.getTargetClass() + "." + method.getSignature()
-									+ ": Unmodeled postcondition for spec: " + spec);
-							TestGeneratorSummaryData._I().incUnmodeledPostConditions();
-							// TODO: how do we deal with specs for which there exist a postcondition, but
-							// Toradocu failed to map the corresponding condition?
-						}
-						postCond = "";
-					}
-				} else if (spec instanceof ThrowsSpecification) {
-					postCond = ((ThrowsSpecification) spec).getExceptionTypeName();
-					if (postCond == null || postCond.isEmpty()) {
-						if (((ThrowsSpecification) spec).getDescription().isEmpty()) {
-							log.error("* Method " + configuration.getTargetClass() + "." + method.getSignature()
-									+ ": Throws spec has empty property for spec: " + spec);
-							TestGeneratorSummaryData._I().incEmptyPostConditions();
-						} else {
-							log.info("* Method " + configuration.getTargetClass() + "." + method.getSignature()
-									+ ": Unmodeled exeception for spec: " + spec);
-							TestGeneratorSummaryData._I().incUnmodeledPostConditions();
-							// TODO: how do we deal with specs for which there exist a postcondition, but
-							// Toradocu failed to map the corresponding condition?
-						}
-						postCond = "";
-					}
-				} else {
-					log.error("* Method " + configuration.getTargetClass() + "." + method.getSignature()
-							+ ": This type of target spec is not handled yet: " + spec);
-					TestGeneratorSummaryData._I().incTestGenerationErrors();
-					throw new RuntimeException("Should never happen");
-				}
+				// The perspective test aims to the target postconditions
+				String postCond = getPostCondAsString(spec, method);
 
 				if (postCond.isEmpty() && (specGuardEmpty || unmodeledGuard)) {
 					log.error("* Method " + configuration.getTargetClass() + "." + method.getSignature()
@@ -248,41 +230,34 @@ public class TestGenerator {
 					TestGeneratorSummaryData._I().incTestGenerationErrors();
 					continue;
 				}
-				String[] postconds = new String[] { postCond };
-
+				boolean unmodeled = unmodeledGuard || postCond.isEmpty();
+				
 				// We then generate the 2 evaluators that refer to the guards and the postconds
-				if (evaluatorNumber % MAX_EVALUATORS_PER_EVOSUITE_CALL == 0) {
-					evaluatorDefsForEvosuite.push(Pair.of("", new HashMap<>()));
+				if (evaluatorGroups.isEmpty() || evaluatorNumber % MAX_EVALUATORS_PER_EVOSUITE_CALL == 0) {
+					evaluatorGroups.add(0, new EvaluatorGroup());
 					// starts a new group of <evaluatorDefs, test case assertions>
 				}
-				boolean unmodeled = unmodeledGuard || postCond.isEmpty();
+				EvaluatorGroup evaluators = evaluatorGroups.get(0);
+
+				// ...an evaluator to search for a test case that satisfies the given postcondition
 				final String evaluatorBaseName = "EvoSuiteEvaluator_" + (evaluatorNumber + 1);
+				final String evaluatorBaseQualifiedName =  (packageName.isEmpty() ? "" : packageName + ".") + evaluatorBaseName;
+				String evaluatorName = evaluatorBaseName + (unmodeled ? "_unmodeled" : "");
+				String evaluatorQualifiedName = evaluatorBaseQualifiedName + (unmodeled ? "_unmodeled" : "");;
 				final String testBaseName = configuration.getTargetClass() + "_" + (evaluatorNumber + 1);
-				// ...an evaluator to search for a test case that satisfies the given
-				// postcondition
-				final String evaluatorName = evaluatorBaseName + (unmodeled ? "_unmodeled" : "");
 				final String testName = testBaseName + (unmodeled ? "_unmodeled" : "") + "_Test";
-				createEvaluator(method, guards.toArray(new String[0]), postconds, spec instanceof ThrowsSpecification, false, evaluatorName, evaluatorsDir,
-						classpathTarget);
+				evaluators.addItem(evaluatorQualifiedName, testName, method, spec);
+				createEvaluator(method, guards.toArray(new String[0]), new String[]{postCond}, spec instanceof ThrowsSpecification, false, evaluatorName, evaluatorsDir);
 				TestGeneratorSummaryData._I().incGeneratedPositiveEvaluators();
-				// spec for defining the assertion, when (and if) we generate the test case
-				// later on
-				evaluatorDefsForEvosuite.peek().getRight().put(testName, Pair.of(method, spec));
-				// ...and another evaluator to search for a test case that violates the given
-				// postcondition
-				String evaluatorDef = method.getDeclaringClass().getCanonicalName() + "," + formattedMethodSignature
-						+ "," + (packageName.isEmpty() ? "" : packageName + ".") + evaluatorName;
+				
 				if (!unmodeled) {
+					// ...an evaluator to search for a test case that violates the given postcondition
 					final String evaluatorForViolationName = evaluatorBaseName + "_failure";
+					final String evaluatorForViolationQualifiedName = evaluatorBaseQualifiedName + "_failure";
 					final String testForViolationName = testBaseName + "_failure_Test";
-					createEvaluator(method, guards.toArray(new String[0]), postconds, spec instanceof ThrowsSpecification, true, evaluatorForViolationName,
-							evaluatorsDir, classpathTarget);
+					evaluators.addItem(evaluatorForViolationQualifiedName, testForViolationName, method, spec);
+					createEvaluator(method, guards.toArray(new String[0]), new String[]{postCond}, spec instanceof ThrowsSpecification, true, evaluatorForViolationName, evaluatorsDir);
 					TestGeneratorSummaryData._I().incGeneratedNegativeEvaluators();
-					evaluatorDefsForEvosuite.peek().getRight().put(testForViolationName, Pair.of(method, spec));
-					// spec for defining the assertion, when (and if) we generate the test case
-					// later on
-					evaluatorDef += ":" + method.getDeclaringClass().getCanonicalName() + "," + formattedMethodSignature
-							+ "," + (packageName.isEmpty() ? "" : packageName + ".") + evaluatorForViolationName;
 					/*
 					 * RATIONALE: if postCond != empty - guardUnmodeled: possibly we may violate the
 					 * postcond out of the guard (which we cannot automatically check for) --> it
@@ -295,10 +270,6 @@ public class TestGenerator {
 					 * assertion later on in the positive test).
 					 */
 				}
-				Pair<String, Map<String, Pair<DocumentedExecutable, Specification>>> evaluatorDefs = evaluatorDefsForEvosuite
-						.pop();
-				String newDef = evaluatorDefs.getLeft() + (evaluatorDefs.getLeft().isEmpty() ? "" : ":") + evaluatorDef;
-				evaluatorDefsForEvosuite.push(Pair.of(newDef, evaluatorDefs.getRight()));
 				evaluatorNumber += 1;
 			}
 		}
@@ -311,9 +282,9 @@ public class TestGenerator {
 			log.info("Did not find any oracles for which test cases shall be generated");
 		}
 		GuidedGenerationReport reportGeneration = new GuidedGenerationReport();
-		for (int i = 0; i < evaluatorDefsForEvosuite.size(); ++i) {
+		for (int i = 0; i < evaluatorGroups.size(); ++i) {
 			// Launch EvoSuite
-			List<String> evosuiteCommand = buildEvoSuiteCommand(evaluatorDefsForEvosuite.get(i).getLeft(),
+			List<String> evosuiteCommand = buildEvoSuiteCommand(evaluatorGroups.get(i).asEvosuiteParameter(),
 					evaluatorsDir, testsDir);
 			final Path evosuiteLogFilePath = evaluatorsDir.resolve("evosuite-log-" + i + ".txt");
 			try {
@@ -334,16 +305,92 @@ public class TestGenerator {
 			}
 
 			// Step 3/3: Enrich the generated test cases with assumptions and assertions
-			Map<String, Pair<DocumentedExecutable, Specification>> assertionsToAddInTestCases = evaluatorDefsForEvosuite
-					.get(i).getRight();
-			for (String testName : assertionsToAddInTestCases.keySet()) {
-				Pair<DocumentedExecutable, Specification> specData = assertionsToAddInTestCases.get(testName);
-				enrichTestWithOracle(testsDir, testName, specData.getLeft(), specData.getRight(), specifications);
-				reportGeneration.buildReport(testsDir, testName, configuration.getTargetClass(),
-						specData.getLeft().getSignature(), specData.getRight());
+			ArrayList<TestCaseInfo> assertionsToAddInTestCases = evaluatorGroups.get(i).expectedTestCases;
+			for (TestCaseInfo testCaseInfo : assertionsToAddInTestCases) {
+				enrichTestWithOracle(testsDir, testCaseInfo.testName, testCaseInfo.focalMethod, testCaseInfo.focalContract, specifications);
+				reportGeneration.buildReport(testsDir, testCaseInfo.testName, configuration.getTargetClass(),
+						testCaseInfo.focalMethod.getSignature(), testCaseInfo.focalContract);
 			}
 		}
 		reportGeneration.generateReport();
+	}
+
+	private static String getPostCondAsString(Specification spec, DocumentedExecutable method) {
+		String postCond;
+		if (spec instanceof PostSpecification) {
+			postCond = ((PostSpecification) spec).getProperty().getConditionText();
+			if (postCond == null || postCond.isEmpty()) {
+				if (((PostSpecification) spec).getProperty().getDescription().isEmpty()) {
+					log.error("* Method " + configuration.getTargetClass() + "." + method.getSignature()
+							+ ": Post conditions has empty property for spec: " + spec);
+					TestGeneratorSummaryData._I().incEmptyPostConditions();
+				} else {
+					log.info("* Method " + configuration.getTargetClass() + "." + method.getSignature()
+							+ ": Unmodeled postcondition for spec: " + spec);
+					TestGeneratorSummaryData._I().incUnmodeledPostConditions();
+					// TODO: how do we deal with specs for which there exist a postcondition, but
+					// Toradocu failed to map the corresponding condition?
+				}
+				postCond = "";
+			}
+		} else if (spec instanceof ThrowsSpecification) {
+			postCond = ((ThrowsSpecification) spec).getExceptionTypeName();
+			if (postCond == null || postCond.isEmpty()) {
+				if (((ThrowsSpecification) spec).getDescription().isEmpty()) {
+					log.error("* Method " + configuration.getTargetClass() + "." + method.getSignature()
+							+ ": Throws spec has empty property for spec: " + spec);
+					TestGeneratorSummaryData._I().incEmptyPostConditions();
+				} else {
+					log.info("* Method " + configuration.getTargetClass() + "." + method.getSignature()
+							+ ": Unmodeled exeception for spec: " + spec);
+					TestGeneratorSummaryData._I().incUnmodeledPostConditions();
+					// TODO: how do we deal with specs for which there exist a postcondition, but
+					// Toradocu failed to map the corresponding condition?
+				}
+				postCond = "";
+			}
+		} else {
+			log.error("* Method " + configuration.getTargetClass() + "." + method.getSignature()
+					+ ": This type of target spec is not handled yet: " + spec);
+			TestGeneratorSummaryData._I().incTestGenerationErrors();
+			throw new RuntimeException("Should never happen");
+		}
+		return postCond;
+	}
+
+	private static class EmptyGuardException extends Exception { }
+	private static class UnmodeledGuardException extends Exception { }
+	
+	private static String getGuardAsString(Specification spec, DocumentedExecutable method, ArrayList<Specification> targetSpecs) throws EmptyGuardException, UnmodeledGuardException {
+		String grd = spec.getGuard().getConditionText();
+		if (grd != null && !grd.isEmpty()) {
+			log.debug("* Method " + configuration.getTargetClass() + "." + method.getSignature()
+					+ ": Guarded spec found: " + spec);
+			// The perspective test shall satisfy the guard of the target spec
+			return grd;
+		} else if (spec.getGuard().getDescription().isEmpty()) {
+			// In this case there is no guard indeed
+			log.debug("* Method " + configuration.getTargetClass() + "." + method.getSignature()
+					+ ": Unguarded spec found: " + spec);
+			if (spec instanceof ThrowsSpecification) {
+				if (targetSpecs.size() > 1)
+					log.error("Method " + configuration.getTargetClass() + "." + method.getSignature()
+							+ ": We have " + targetSpecs.size()
+							+ " specs. However, it does not make sense to have more than a spec when there is an unguarded thorws-spec.");
+				log.error("** SPECS ARE: " + targetSpecs);
+				TestGeneratorSummaryData._I().incTestGenerationErrors();
+			}
+			throw new EmptyGuardException();
+		} else {
+			log.info("* Method " + configuration.getTargetClass() + "." + method.getSignature()
+					+ ": Unmodeled guard found for spec: " + spec);
+			TestGeneratorSummaryData._I().incUnmodeledGuards();
+			// TODO: how do we deal with specs for which there exist a guard, but Toradocu
+			// failed to map the guard to a condition?
+			// At the moment, we try to generate a test case that satisfies the path
+			// condition, but it is not clear if this makes sense.
+			throw new UnmodeledGuardException();
+		}
 	}
 
 	private static void enrichTestWithOracle(Path testsDir, String testName, DocumentedExecutable targetMethod,
@@ -807,10 +854,15 @@ public class TestGenerator {
 	 * @param lookForPostCondViolation
 	 */
 	private static void createEvaluator(DocumentedExecutable method, String guards[], String postConds[], boolean isThrows,
-			boolean lookForPostCondViolation, String evaluatorName, Path outputDir, String classpathForCompilation) {
+			boolean lookForPostCondViolation, String evaluatorName, Path outputDir) {
 		Checks.nonNullParameter(method, "method");
 		Checks.nonNullParameter(guards, "guardStrings");
 		Checks.nonNullParameter(evaluatorName, "evaluatorName");
+		
+		String classpathForCompilation = ".";
+		for (URL cp : configuration.classDirs) {
+			classpathForCompilation += ":" + cp.getPath();
+		}
 
 		final InputStream evaluatorTemplate = ClassLoader.getSystemResourceAsStream(EVALUATOR_TEMPLATE_NAME + ".java");
 		CompilationUnit cu = StaticJavaParser.parse(evaluatorTemplate);

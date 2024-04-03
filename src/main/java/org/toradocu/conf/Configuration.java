@@ -96,13 +96,13 @@ public enum Configuration {
 	private boolean testGeneration = false;
 
 	@Parameter(names = "--java8path", description = "The system path to execute java8 jvm, needed to run evosuite for test generation", arity = 1)
-	private String java8path = "/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java";
+	private String java8path = "/Library/Java/JavaVirtualMachines/jdk1.8.0_91.jdk/Contents/Home/bin/java";
 
 	@Parameter(names = "--test-output-dir", description = "Specifies a directory where Toradocu will store the generated test cases")
 	private String testOutputDir = "tests";
 
 	@Parameter(names = "--evosuite-jar", description = "Specifies the path to the jar of EvoSuite")
-	private String evosuiteJar = "evosuite-shaded-1.1.1-SNAPSHOT.jar";
+	private String evosuiteJar = "evosuite-shaded-1.2.1-SNAPSHOT.jar";
 
 	@Parameter(names = "--evosuite-budget", description = "Specifies the maximum time (in seconds) allowed to EvoSuite for test case generation")
 	private int evosuiteBudget = 180;
