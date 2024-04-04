@@ -2,6 +2,7 @@ package org.toradocu.generator;
 
 import static org.toradocu.Toradocu.configuration;
 
+import com.github.javaparser.ParseProblemException;
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.NodeList;
@@ -30,6 +31,7 @@ import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -39,8 +41,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Stack;
 
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
@@ -76,10 +81,13 @@ public class TestGenerator {
 	/** {@code Logger} for this class. */
 	private static final Logger log = LoggerFactory.getLogger(TestGenerator.class);
 	
+	/* We generate a test case for a given contract (i.e., test case is related to a "focal" contract). 
+	 * In turn the contract relates to a method, which thus is the focal method of the test case.
+	 */
 	private static class TestCaseInfo {
 		String testName;
-		DocumentedExecutable focalMethod;
 		Specification focalContract;
+		DocumentedExecutable focalMethod;
 		TestCaseInfo(String testName, DocumentedExecutable focalMethod, Specification focalContract) {
 			this.testName = testName;
 			this.focalMethod = focalMethod;
@@ -87,11 +95,12 @@ public class TestGenerator {
 		}
 	}
 
-	private static class EvaluatorDef {
+	/* An evaluator relates to a target method: targetClassName.targetMethodName */
+	private static class EvaluatorInfo {
 		String evaluatorClassName;
 		String targetClassName;
 		String targetMethodName;
-		EvaluatorDef(String evaluatorClassName, String targetClassName, DocumentedExecutable method) {
+		EvaluatorInfo(String evaluatorClassName, String targetClassName, DocumentedExecutable method) {
 			this.evaluatorClassName = evaluatorClassName;
 			this.targetClassName = targetClassName;
 			this.targetMethodName = bytecodeStyleSignature(method);
@@ -101,22 +110,30 @@ public class TestGenerator {
 		}
 	}
 
+	/* An evaluator group includes a set of evaluators that shall be passed to evosuite in a single run,
+	 * and the information on the test cases that we expect to find in the file system as a result. 
+	 * After evosuite terminates, we can check the presence of the corresponding test
+	 * cases by name, and can associate them with corresponding oracles based on the TestCaseInfo data. */
 	private static class EvaluatorGroup {
-		ArrayList<EvaluatorDef> evaluatorParamDefs = new ArrayList<>();
+		ArrayList<EvaluatorInfo> evaluators = new ArrayList<>();
 		ArrayList<TestCaseInfo> expectedTestCases = new ArrayList<>();
+		int numOfFocalContracts = 0;
 		String asEvosuiteParameter() {
-			if (evaluatorParamDefs.isEmpty()) {
+			if (evaluators.isEmpty()) {
 				return "";
 			}
-			String s = evaluatorParamDefs.get(0).asEvosuiteParameter();
-			for (int i = 1; i < evaluatorParamDefs.size(); ++i) {
-				s += ":" + evaluatorParamDefs.get(i).asEvosuiteParameter();
+			String s = evaluators.get(0).asEvosuiteParameter();
+			for (int i = 1; i < evaluators.size(); ++i) {
+				s += ":" + evaluators.get(i).asEvosuiteParameter();
 			}
 			return s;
 		}
-		void addItem(String evaluatorName, String correspondingTestName, DocumentedExecutable method, Specification spec) {
-			evaluatorParamDefs.add(new EvaluatorDef(evaluatorName, method.getDeclaringClass().getCanonicalName(), method));
+		void addItem(String evaluatorName, String correspondingTestName, DocumentedExecutable method, Specification spec, boolean countAsNewFocalContract) {
+			evaluators.add(new EvaluatorInfo(evaluatorName, method.getDeclaringClass().getCanonicalName(), method));
 			expectedTestCases.add(new TestCaseInfo(correspondingTestName, method, spec));	
+			if (countAsNewFocalContract) {
+				++numOfFocalContracts;
+			}
 		}
 	}
 
@@ -149,10 +166,12 @@ public class TestGenerator {
 	public static void createTests(Map<DocumentedExecutable, OperationSpecification> specifications)
 			throws IOException {
 		Checks.nonNullParameter(specifications, "specifications");
+		
 		if (specifications.isEmpty()) {
 			log.error("Test generation skipedd, as the set of specs is empty");
 			return;
 		}
+		
 		// Create output directory where evaluators are saved.
 		final Path evaluatorsDir = Paths.get(configuration.getTestOutputDir()).resolve(EVALUATORS_FOLDER);
 		final boolean evaluatorsDirCreationSucceeded = createOutputDir(evaluatorsDir.toString(), true);
@@ -160,6 +179,7 @@ public class TestGenerator {
 			log.error("Test generation failed, cannot create dir:" + evaluatorsDir);
 			return;
 		}
+		
 		// Create output directory where test cases are saved.
 		final Path testsDir = Paths.get(configuration.getTestOutputDir()).resolve(TESTCASES_FOLDER);
 		final boolean testsDirCreationSucceeded = createOutputDir(testsDir.toString(), true);
@@ -169,6 +189,10 @@ public class TestGenerator {
 		}
 
 		// Step 1/3: Create evaluators
+		String classpathTarget = ".";
+		for (URL cp : configuration.classDirs) {
+			classpathTarget += ":" + cp.getPath();
+		}
 		int evaluatorNumber = 0;
 		List<EvaluatorGroup> evaluatorGroups = new ArrayList<>();
 
@@ -246,8 +270,10 @@ public class TestGenerator {
 				String evaluatorQualifiedName = evaluatorBaseQualifiedName + (unmodeled ? "_unmodeled" : "");;
 				final String testBaseName = configuration.getTargetClass() + "_" + (evaluatorNumber + 1);
 				final String testName = testBaseName + (unmodeled ? "_unmodeled" : "") + "_Test";
-				evaluators.addItem(evaluatorQualifiedName, testName, method, spec);
-				createEvaluator(method, guards.toArray(new String[0]), new String[]{postCond}, spec instanceof ThrowsSpecification, false, evaluatorName, evaluatorsDir);
+
+				evaluators.addItem(evaluatorQualifiedName, testName, method, spec, true);
+				createEvaluator(method, guards.toArray(new String[0]), new String[]{postCond}, spec instanceof ThrowsSpecification,
+						false, evaluatorName, evaluatorsDir, classpathTarget);
 				TestGeneratorSummaryData._I().incGeneratedPositiveEvaluators();
 				
 				if (!unmodeled) {
@@ -255,8 +281,11 @@ public class TestGenerator {
 					final String evaluatorForViolationName = evaluatorBaseName + "_failure";
 					final String evaluatorForViolationQualifiedName = evaluatorBaseQualifiedName + "_failure";
 					final String testForViolationName = testBaseName + "_failure_Test";
-					evaluators.addItem(evaluatorForViolationQualifiedName, testForViolationName, method, spec);
-					createEvaluator(method, guards.toArray(new String[0]), new String[]{postCond}, spec instanceof ThrowsSpecification, true, evaluatorForViolationName, evaluatorsDir);
+
+					evaluators.addItem(evaluatorForViolationQualifiedName, testForViolationName, method, spec, false);
+					createEvaluator(method, guards.toArray(new String[0]), new String[]{postCond},
+							spec instanceof ThrowsSpecification, true, evaluatorForViolationName, evaluatorsDir,
+							classpathTarget);
 					TestGeneratorSummaryData._I().incGeneratedNegativeEvaluators();
 					/*
 					 * RATIONALE: if postCond != empty - guardUnmodeled: possibly we may violate the
@@ -282,10 +311,34 @@ public class TestGenerator {
 			log.info("Did not find any oracles for which test cases shall be generated");
 		}
 		GuidedGenerationReport reportGeneration = new GuidedGenerationReport();
+
+		HashMap<String, Integer> evosuiteLaunches = new HashMap<String, Integer>();
 		for (int i = 0; i < evaluatorGroups.size(); ++i) {
+			
+			int evosuiteBudget = evaluatorGroups.get(i).numOfFocalContracts * configuration.getEvoSuiteBudget();
+			evosuiteBudget = evosuiteBudget < 60 ? 60 : evosuiteBudget;
+			
+			// Count Evosuite budget per single class and store it
+			if (evosuiteLaunches.containsKey(configuration.getTargetClass())) {
+				int tmpBudget = evosuiteLaunches.get(configuration.getTargetClass());
+				evosuiteLaunches.put(configuration.getTargetClass(), tmpBudget + evosuiteBudget);
+			} else {
+				evosuiteLaunches.put(configuration.getTargetClass(), evosuiteBudget);
+			}
+					
+			/*
+			// Count number of Evosuite launchs per single class and store it
+			if (evosuiteLaunches.containsKey(configuration.getTargetClass())) {
+				int launches = evosuiteLaunches.get(configuration.getTargetClass());
+				evosuiteLaunches.put(configuration.getTargetClass(), launches + 1);
+			} else {
+				evosuiteLaunches.put(configuration.getTargetClass(), 1);
+			}
+			*/
+		
 			// Launch EvoSuite
 			List<String> evosuiteCommand = buildEvoSuiteCommand(evaluatorGroups.get(i).asEvosuiteParameter(),
-					evaluatorsDir, testsDir);
+					evaluatorsDir, testsDir, evosuiteBudget);
 			final Path evosuiteLogFilePath = evaluatorsDir.resolve("evosuite-log-" + i + ".txt");
 			try {
 				Process processEvosuite = launchProcess(evosuiteCommand, evosuiteLogFilePath);
@@ -307,11 +360,20 @@ public class TestGenerator {
 			// Step 3/3: Enrich the generated test cases with assumptions and assertions
 			ArrayList<TestCaseInfo> assertionsToAddInTestCases = evaluatorGroups.get(i).expectedTestCases;
 			for (TestCaseInfo testCaseInfo : assertionsToAddInTestCases) {
-				enrichTestWithOracle(testsDir, testCaseInfo.testName, testCaseInfo.focalMethod, testCaseInfo.focalContract, specifications);
-				reportGeneration.buildReport(testsDir, testCaseInfo.testName, configuration.getTargetClass(),
-						testCaseInfo.focalMethod.getSignature(), testCaseInfo.focalContract);
+				try{
+					enrichTestWithOracle(testsDir, testCaseInfo.testName, testCaseInfo.focalMethod, testCaseInfo.focalContract, specifications);
+					reportGeneration.buildReport(testsDir, testCaseInfo.testName, configuration.getTargetClass(),
+							testCaseInfo.focalMethod.getSignature(), testCaseInfo.focalContract);
+				} catch (ParseProblemException e) {
+					log.error(
+							"Error during parsing. This probably means that a generated test case contains some compilation errors.",
+							e);
+				}
 			}
 		}
+		// Store number of Evosuite launches in csv file
+		numberOfEvosuiteLaunchesPerClassToCSV(evosuiteLaunches);
+		// Generate report
 		reportGeneration.generateReport();
 	}
 
@@ -393,6 +455,34 @@ public class TestGenerator {
 		}
 	}
 
+	private static void numberOfEvosuiteLaunchesPerClassToCSV(HashMap<String, Integer> evosuiteLaunches)
+			throws IOException {
+		File myObj = new File("numberOfEvosuiteLaunches.csv");
+		if (!myObj.exists()) {
+			myObj.createNewFile();
+			try {
+				FileWriter myWriter = new FileWriter(myObj);
+				myWriter.write("class" + ";" + "launches" + System.lineSeparator());
+				myWriter.close();
+			} catch (IOException e) {
+				log.error(
+						"An error occurred during the creation of the csv file containing the number of times Evosuite is launched per class.",
+						e);
+			}
+		}
+		for (Entry<String, Integer> launch : evosuiteLaunches.entrySet()) {
+			String clax = launch.getKey();
+			int numberOfLaunches = launch.getValue();
+			try {
+				FileWriter myWriter = new FileWriter(myObj, true);
+				myWriter.write("\"" + clax + "\"" + ";" + numberOfLaunches + System.lineSeparator());
+				myWriter.close();
+			} catch (IOException e) {
+				log.error("An error occurred during the filling of the csv file containing the number of times Evosuite is launched per class.", e);
+			}
+		}
+	}
+
 	private static void enrichTestWithOracle(Path testsDir, String testName, DocumentedExecutable targetMethod,
 			Specification spec, Map<DocumentedExecutable, OperationSpecification> allSpecs) {
 		final Path testCaseAbsPath = testsDir.resolve(testName.replace('.', File.separatorChar) + ".java");
@@ -415,7 +505,7 @@ public class TestGenerator {
 		try {
 			cu = StaticJavaParser.parse(currentTestCase);
 		} catch (FileNotFoundException e) {
-			e.printStackTrace();
+			log.error("Test case not found while trying to parse it.", e);
 		}
 
 		// In any case: throw an exception if a failure-driven test case completed
@@ -769,7 +859,7 @@ public class TestGenerator {
 	 *         {@link List}{@code <}{@link String}{@code >}, suitable to be passed
 	 *         to a {@link ProcessBuilder}.
 	 */
-	private static List<String> buildEvoSuiteCommand(String evaluatorDefsForEvoSuite, Path outputDir, Path testsDir) {
+	private static List<String> buildEvoSuiteCommand(String evaluatorDefsForEvoSuite, Path outputDir, Path testsDir, int evosuiteBudget) {
 		final String targetClass = configuration.getTargetClass();
 		final List<String> retVal = new ArrayList<String>();
 		String classpathTarget = outputDir.toString();
@@ -787,7 +877,8 @@ public class TestGenerator {
 		retVal.add("-DCP=" + classpathTarget);
 		retVal.add("-Dassertions=false");
 		// retVal.add("-Dglobal_timeout=" + configuration.getEvoSuiteBudget());
-		retVal.add("-Dsearch_budget=" + configuration.getEvoSuiteBudget());
+		//retVal.add("-Dsearch_budget=" + configuration.getEvoSuiteBudget());
+		retVal.add("-Dsearch_budget=" + evosuiteBudget);
 		retVal.add("-Dreport_dir=" + outputDir);
 		retVal.add("-Dtest_dir=" + testsDir);
 		retVal.add("-Dvirtual_fs=false");
@@ -853,17 +944,13 @@ public class TestGenerator {
 	 * @param classpathForCompilation
 	 * @param lookForPostCondViolation
 	 */
-	private static void createEvaluator(DocumentedExecutable method, String guards[], String postConds[], boolean isThrows,
-			boolean lookForPostCondViolation, String evaluatorName, Path outputDir) {
+	private static void createEvaluator(DocumentedExecutable method, String guards[], String postConds[],
+			boolean isThrows, boolean lookForPostCondViolation, String evaluatorName, Path outputDir,
+			String classpathForCompilation) {
 		Checks.nonNullParameter(method, "method");
 		Checks.nonNullParameter(guards, "guardStrings");
 		Checks.nonNullParameter(evaluatorName, "evaluatorName");
 		
-		String classpathForCompilation = ".";
-		for (URL cp : configuration.classDirs) {
-			classpathForCompilation += ":" + cp.getPath();
-		}
-
 		final InputStream evaluatorTemplate = ClassLoader.getSystemResourceAsStream(EVALUATOR_TEMPLATE_NAME + ".java");
 		CompilationUnit cu = StaticJavaParser.parse(evaluatorTemplate);
 
@@ -878,8 +965,8 @@ public class TestGenerator {
 				.ifPresent(c -> c.setName(evaluatorName));
 
 		// Customize and emit the evaluator
-		new EvaluatorModifierVisitor().visit(cu,
-				new EvaluatorModifierVisitor.InstrumentationData(method, guards, postConds, isThrows, lookForPostCondViolation));
+		new EvaluatorModifierVisitor().visit(cu, new EvaluatorModifierVisitor.InstrumentationData(method, guards,
+				postConds, isThrows, lookForPostCondViolation));
 		final Path evaluatorFolder = outputDir.resolve(packageName.replace('.', '/'));
 		final Path evaluatorPath = evaluatorFolder.resolve(evaluatorName + ".java");
 		try (FileOutputStream output = new FileOutputStream(new File(evaluatorPath.toString()))) {

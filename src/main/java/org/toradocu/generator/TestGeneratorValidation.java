@@ -459,15 +459,6 @@ public class TestGeneratorValidation {
 
 			// Add postcondition oracle guard
 			String clause = composeGuardClause(spec, targetCall, targetMethodName, "");
-			// Skip unmodeled guard
-			if (clause.contains("SKIP_UNMODELED")) {
-				String comment = "Skipped check due to unmodeled guard: " + spec.getGuard() + " "
-						+ spec.getDescription();
-				addSkipClause(precondSatisfiedInsertionPoint, targetCall, identifier, specificationCounter, "unmodeled",
-						comment);
-				identifier++;
-				continue;
-			}
 
 			// Skip non satisfiable guard
 			if (clause.contains("null.")) {
@@ -479,21 +470,47 @@ public class TestGeneratorValidation {
 			}
 
 			String clauseComment = "Guard: " + spec.getDescription() + "Condition: " + spec.getGuard();
-			addIfGuard(clause, targetCall, targetMethod.getReturnType().getType(), precondSatisfiedInsertionPoint,
-					identifier, clauseComment);
+
+			boolean unmodeledGuard = false;
+			// Manage and mark unmodeled guard
+			if (clause.contains("SKIP_UNMODELED")) {
+				clauseComment = "Skipped check due to unmodeled guard: " + spec.getGuard() + " "
+						+ spec.getDescription();
+				clause = "true";
+				unmodeledGuard = true;
+			}
 
 			// add assert
 			if (spec instanceof PostSpecification) {
+				PostSpecification postSpec = (PostSpecification) spec;
+				if (postSpec.getProperty().getConditionText().isEmpty() && (clause.equals("true") || unmodeledGuard)) {
+					log.error("* Method " + configuration.getTargetClass() + "." + targetMethod.getSignature()
+							+ ": Skipping spec with both empty/unmodeled guard and empty/unmodeled post condition: "
+							+ spec);
+					continue;
+				}
+
+				addIfGuard(clause, targetCall, targetMethod.getReturnType().getType(), precondSatisfiedInsertionPoint,
+						identifier, clauseComment);
+
 				// the postCondition of the oracle, plus all postConditions with empty guards
-				ExpressionStmt newTargetCall = addAssertClause((PostSpecification) spec, clause, targetCall,
-						insertionPoint, targetMethodName, targetMethod.getReturnType().getType(), false, identifier,
-						specificationCounter);
+				ExpressionStmt newTargetCall = addAssertClause(postSpec, unmodeledGuard, targetCall, insertionPoint,
+						targetMethod, identifier, specificationCounter);
 				methodCallsToEnrich.set(i, newTargetCall);
 				targetCall = newTargetCall;
 			} else if (spec instanceof ThrowsSpecification) {
+				ThrowsSpecification throwSpec = (ThrowsSpecification) spec;
+				if (throwSpec.getExceptionTypeName().isEmpty() && (clause.equals("true") || unmodeledGuard)) {
+					log.error("* Method " + configuration.getTargetClass() + "." + targetMethod.getSignature()
+							+ ": Skipping spec with both empty/unmodeled guard and empty/unmodeled post condition: "
+							+ spec);
+					continue;
+				}
+				addIfGuard(clause, targetCall, targetMethod.getReturnType().getType(), precondSatisfiedInsertionPoint,
+						identifier, clauseComment);
 				// the try-catch block to check for the expected
-				addFailClause((ThrowsSpecification) spec, clause, targetCall, insertionPoint, targetMethodName,
-						targetMethod.getReturnType().getType(), false, identifier, specificationCounter);
+				addFailClause(throwSpec, unmodeledGuard, targetCall, insertionPoint, targetMethod, identifier,
+						specificationCounter);
 			} else {
 				// exception
 				throw new RuntimeException(
@@ -552,15 +569,34 @@ public class TestGeneratorValidation {
 		}
 	}
 
-	private static void addFailClause(ThrowsSpecification postCond, String clause, ExpressionStmt targetCall,
-			NodeList<Statement> insertionPoint, String targetMethodName, Type targetMethodReturnType,
-			boolean isGeneralPostCond, int identifier, int specificationCounter) {
-		Statement assertStmt = StaticJavaParser.parseStatement(
-				"if(uniqueGuardIds_lta.contains(\"" + identifier + "\")) {failedConds++;globalGuardsIds_lta.put(\""
-						+ specificationCounter + "\",\"fail\");org.junit.Assert.fail();}");
-		String comment = "Automatically generated test oracle:" + postCond.getDescription();
-		assertStmt.setLineComment(comment);
-		insertionPoint.addAfter(assertStmt, targetCall);
+	private static void addFailClause(ThrowsSpecification postCond, boolean unmodeled, ExpressionStmt targetCall,
+			NodeList<Statement> insertionPoint, DocumentedExecutable targetMethod, int identifier,
+			int specificationCounter) {
+		String postCondCondition = postCond.getExceptionTypeName();
+		if (postCondCondition == null || postCondCondition.isEmpty()) {
+			if (postCond.getExceptionTypeName().isEmpty()) {
+				log.error("* Method " + configuration.getTargetClass() + "." + targetMethod.getSignature()
+						+ ": Post conditions has empty property for spec: " + postCond);
+			} else {
+				log.info("* Method " + configuration.getTargetClass() + "." + targetMethod.getSignature()
+						+ ": Unmodeled postcondition for spec: " + postCond);
+			}
+			postCondCondition = "";
+			unmodeled = true;
+		}
+
+		// TODO: here we have an unmodeled exception; consequently, if the unmodeled
+		// part is the
+		// postcondition itself while the guard exists, should we report it as a fail
+		// since we know for sure that an exception wasn't raised?
+		if (!unmodeled) {
+			Statement assertStmt = StaticJavaParser.parseStatement(
+					"if(uniqueGuardIds_lta.contains(\"" + identifier + "\")) {failedConds++;globalGuardsIds_lta.put(\""
+							+ specificationCounter + "\",\"fail\");org.junit.Assert.fail();}");
+			String comment = "Automatically generated test oracle:" + postCond.getDescription();
+			assertStmt.setLineComment(comment);
+			insertionPoint.addAfter(assertStmt, targetCall);
+		}
 		Optional<Node> n = insertionPoint.getParentNode();
 		if (n.isPresent()) {
 			n = n.get().getParentNode();
@@ -572,30 +608,46 @@ public class TestGeneratorValidation {
 					BlockStmt bs = cc.getBody();
 					IfStmt ifUniqueGuard = new IfStmt();
 					ifUniqueGuard.setCondition(
-							StaticJavaParser.parseExpression("uniqueGuardIds_lta.contains(\"" + identifier + "\")"));
-					IfStmt ifContractStatus = new IfStmt();
-					ifContractStatus.setCondition(StaticJavaParser.parseExpression(
-							cc.getParameter().getName() + " instanceof " + postCond.getExceptionTypeName()));
-					IfStmt thenIfContractStatus = new IfStmt();
-					thenIfContractStatus.setCondition(StaticJavaParser.parseExpression(
-							"!globalGuardsIds_lta.get(\"" + specificationCounter + "\").equals(\"fail\")"));
-					BlockStmt thenThenIfContractStatus = new BlockStmt();
-					thenThenIfContractStatus.addStatement(
-							StaticJavaParser.parseStatement("pass.add(\"" + specificationCounter + "\");"));
-					thenIfContractStatus.setThenStmt(thenThenIfContractStatus);
-					ifContractStatus.setThenStmt(new BlockStmt().addStatement(thenIfContractStatus));
-					BlockStmt elseIfContractStatus = new BlockStmt();
-					elseIfContractStatus.addStatement(
-							StaticJavaParser.parseStatement("fail.add(\"" + specificationCounter + "\");"));
-					ifContractStatus.setElseStmt(elseIfContractStatus);
-					BlockStmt thenIfUniqueGuard = new BlockStmt();
-					thenIfUniqueGuard.addStatement(ifContractStatus);
-					thenIfUniqueGuard.addStatement("org.junit.Assert.assertTrue(" + cc.getParameter().getName()
-							+ " instanceof " + postCond.getExceptionTypeName() + ");");
-					ifUniqueGuard.setThenStmt(thenIfUniqueGuard);
+							StaticJavaParser.parseExpression("uniqueGuardIds_lta.contains(\"" + identifier + "\")"));					
+					if (unmodeled) {
+						if(postCondCondition.isEmpty()) {
+							ifUniqueGuard.setThenStmt(new BlockStmt().addStatement(StaticJavaParser
+									.parseStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"unmodeled\");")));
+						} else {
+							IfStmt ifContractStatus = new IfStmt();
+							ifContractStatus.setCondition(StaticJavaParser.parseExpression(
+									cc.getParameter().getName() + " instanceof " + postCond.getExceptionTypeName()));
+							ifContractStatus.setThenStmt(new BlockStmt().addStatement(StaticJavaParser
+									.parseStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"unmodeled\");")));
+							ifUniqueGuard.setThenStmt(new BlockStmt().addStatement(ifContractStatus));			
+						}
+						String comment2 = "Added unmodeled test: " + postCond.getDescription();
+						ifUniqueGuard.setLineComment(comment2);
+					} else {
+						IfStmt ifContractStatus = new IfStmt();
+						ifContractStatus.setCondition(StaticJavaParser.parseExpression(
+								cc.getParameter().getName() + " instanceof " + postCond.getExceptionTypeName()));
+						IfStmt thenIfContractStatus = new IfStmt();
+						thenIfContractStatus.setCondition(StaticJavaParser.parseExpression(
+								"!globalGuardsIds_lta.get(\"" + specificationCounter + "\").equals(\"fail\")"));
+						BlockStmt thenThenIfContractStatus = new BlockStmt();
+						thenThenIfContractStatus.addStatement(
+								StaticJavaParser.parseStatement("pass.add(\"" + specificationCounter + "\");"));
+						thenIfContractStatus.setThenStmt(thenThenIfContractStatus);
+						ifContractStatus.setThenStmt(new BlockStmt().addStatement(thenIfContractStatus));
+						BlockStmt elseIfContractStatus = new BlockStmt();
+						elseIfContractStatus.addStatement(
+								StaticJavaParser.parseStatement("fail.add(\"" + specificationCounter + "\");"));
+						ifContractStatus.setElseStmt(elseIfContractStatus);
+						BlockStmt thenIfUniqueGuard = new BlockStmt();
+						thenIfUniqueGuard.addStatement(ifContractStatus);
+						thenIfUniqueGuard.addStatement("org.junit.Assert.assertTrue(" + cc.getParameter().getName()
+								+ " instanceof " + postCond.getExceptionTypeName() + ");");
+						ifUniqueGuard.setThenStmt(thenIfUniqueGuard);
 
-					String comment2 = "Automatically generated test oracle:" + postCond.getDescription();
-					ifUniqueGuard.setLineComment(comment2);
+						String comment2 = "Automatically generated test oracle: " + postCond.getDescription();
+						ifUniqueGuard.setLineComment(comment2);
+					}
 
 					// Surround the block with try catch to prevent premature end of test cases
 					// execution due to unsatisfied guard postcond exception check that lead to the
@@ -618,16 +670,27 @@ public class TestGeneratorValidation {
 		}
 	}
 
-	private static ExpressionStmt addAssertClause(PostSpecification postCond, String clause, ExpressionStmt targetCall,
-			NodeList<Statement> insertionPoint, String targetMethodName, Type targetMethodReturnType,
-			boolean isGeneralPostCond, int identifier, int specificationCounter) {
+	private static ExpressionStmt addAssertClause(PostSpecification postCond, boolean unmodeled,
+			ExpressionStmt targetCall, NodeList<Statement> insertionPoint, DocumentedExecutable targetMethod,
+			int identifier, int specificationCounter) {
 		ExpressionStmt targetCallToConsider = targetCall;
 		String postCondCondition = postCond.getProperty().getConditionText();
-		String oracle = null;
-		if (postCondCondition != null && !postCondCondition.isEmpty()) {
-			oracle = replaceFormalParamsWithActualValues(postCondCondition, targetCall);
+		if (postCondCondition == null || postCondCondition.isEmpty()) {
+			if (postCond.getProperty().getDescription().isEmpty()) {
+				log.error("* Method " + configuration.getTargetClass() + "." + targetMethod.getSignature()
+						+ ": Post conditions has empty property for spec: " + postCond);
+			} else {
+				log.info("* Method " + configuration.getTargetClass() + "." + targetMethod.getSignature()
+						+ ": Unmodeled postcondition for spec: " + postCond);
+			}
+			postCondCondition = "true";
+			unmodeled = true;
 		}
+
+		String oracle = replaceFormalParamsWithActualValues(postCondCondition, targetCall);
+
 		if (oracle.contains("_methodResult__") && !targetCall.toString().contains("_methodResult__ =")) {
+			Type targetMethodReturnType = targetMethod.getReturnType().getType();
 			// targetCall has a return value which is currently not assigned to any variable
 			// in the test case
 			String targetCallReturnTypeName = targetMethodReturnType.getTypeName();
@@ -675,31 +738,43 @@ public class TestGeneratorValidation {
 						+ insertionPoint.getParentNode());
 			}
 		}
+
 		IfStmt ifUniqueGuard = new IfStmt();
 		ifUniqueGuard
 				.setCondition(StaticJavaParser.parseExpression("uniqueGuardIds_lta.contains(\"" + identifier + "\")"));
 		IfStmt ifContractStatus = new IfStmt();
 		ifContractStatus.setCondition(StaticJavaParser.parseExpression(oracle));
-		IfStmt thenIfContractStatus = new IfStmt();
-		thenIfContractStatus.setCondition(StaticJavaParser
-				.parseExpression("!globalGuardsIds_lta.get(\"" + specificationCounter + "\").equals(\"fail\")"));
-		BlockStmt thenThenIfContractStatus = new BlockStmt();
-		thenThenIfContractStatus.addStatement(
-				StaticJavaParser.parseStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"pass\");"));
-		thenThenIfContractStatus.addStatement("passedConds++;");
-		thenIfContractStatus.setThenStmt(thenThenIfContractStatus);
-		ifContractStatus.setThenStmt(new BlockStmt().addStatement(thenIfContractStatus));
-		BlockStmt elseIfContractStatus = new BlockStmt();
-		elseIfContractStatus.addStatement(
-				StaticJavaParser.parseStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"fail\");"));
-		elseIfContractStatus.addStatement(StaticJavaParser.parseStatement("failedConds++;"));
-		ifContractStatus.setElseStmt(elseIfContractStatus);
-		BlockStmt thenIfUniqueGuard = new BlockStmt();
-		thenIfUniqueGuard.addStatement(ifContractStatus);
-		thenIfUniqueGuard.addStatement("org.junit.Assert.assertTrue(" + oracle + ");");
-		ifUniqueGuard.setThenStmt(thenIfUniqueGuard);
-		String comment = "Automatically generated test oracle:" + postCond.getDescription();
-		ifUniqueGuard.setLineComment(comment);
+		// If postcondition guard or postcondition are unmodeled we simply set their
+		// status to unmodeled since we have no way of determining potential failure or
+		// pass.
+		if (unmodeled) {
+			ifContractStatus.setThenStmt(new BlockStmt().addStatement(StaticJavaParser
+					.parseStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"unmodeled\");")));
+			String comment = "Added unmodeled test: " + postCond.getDescription();
+			ifUniqueGuard.setThenStmt(new BlockStmt().addStatement(ifContractStatus));
+			ifUniqueGuard.setLineComment(comment);
+		} else {
+			IfStmt thenIfContractStatus = new IfStmt();
+			thenIfContractStatus.setCondition(StaticJavaParser
+					.parseExpression("!globalGuardsIds_lta.get(\"" + specificationCounter + "\").equals(\"fail\")"));
+			BlockStmt thenThenIfContractStatus = new BlockStmt();
+			thenThenIfContractStatus.addStatement(StaticJavaParser
+					.parseStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"pass\");"));
+			thenThenIfContractStatus.addStatement("passedConds++;");
+			thenIfContractStatus.setThenStmt(thenThenIfContractStatus);
+			ifContractStatus.setThenStmt(new BlockStmt().addStatement(thenIfContractStatus));
+			BlockStmt elseIfContractStatus = new BlockStmt();
+			elseIfContractStatus.addStatement(StaticJavaParser
+					.parseStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"fail\");"));
+			elseIfContractStatus.addStatement(StaticJavaParser.parseStatement("failedConds++;"));
+			ifContractStatus.setElseStmt(elseIfContractStatus);
+			BlockStmt thenIfUniqueGuard = new BlockStmt();
+			thenIfUniqueGuard.addStatement(ifContractStatus);
+			thenIfUniqueGuard.addStatement("org.junit.Assert.assertTrue(" + oracle + ");");
+			ifUniqueGuard.setThenStmt(thenIfUniqueGuard);
+			String comment = "Automatically generated test oracle: " + postCond.getDescription();
+			ifUniqueGuard.setLineComment(comment);
+		}
 
 		// Surround the block with try catch to prevent premature end of test cases
 		// execution due to unsatisfied guard postcond check that lead to the raising of
@@ -722,35 +797,40 @@ public class TestGeneratorValidation {
 		// If the method invoked in the test case is surrounded with a try catch block
 		// we need to add the postcondition check inside of the catch block and rise an
 		// error if the guard was satisfied, since no exception should be raised for
-		// assertion checks
-		Optional<Node> n = insertionPoint.getParentNode();
-		if (n.isPresent()) {
-			n = n.get().getParentNode();
-			if (n.isPresent() && (n.get() instanceof TryStmt)) {
-				TryStmt ts = (TryStmt) n.get();
-				for (CatchClause cc : ts.getCatchClauses()) {
-					BlockStmt bs = cc.getBody();
-					Statement assertStmt2 = StaticJavaParser
-							.parseStatement("if(uniqueGuardIds_lta.contains(\"" + identifier + "\")) {fail.add(\""
-									+ specificationCounter + "\");org.junit.Assert.fail();}");
-					String comment2 = "Automatically generated test oracle:" + postCond.getDescription();
-					assertStmt2.setLineComment(comment2);
+		// assertion checks.
+		// Nothing should be done in case we have unmodeled postcondition guard or
+		// postcondition.
+		if (!unmodeled) {
+			Optional<Node> n = insertionPoint.getParentNode();
+			if (n.isPresent()) {
+				n = n.get().getParentNode();
+				if (n.isPresent() && (n.get() instanceof TryStmt)) {
+					TryStmt ts = (TryStmt) n.get();
+					for (CatchClause cc : ts.getCatchClauses()) {
+						BlockStmt bs = cc.getBody();
+						Statement assertStmt2 = StaticJavaParser
+								.parseStatement("if(uniqueGuardIds_lta.contains(\"" + identifier + "\")) {fail.add(\""
+										+ specificationCounter + "\");org.junit.Assert.fail();}");
+						String comment2 = "Automatically generated test oracle:" + postCond.getDescription();
+						assertStmt2.setLineComment(comment2);
 
-					// Surround the block with try catch to prevent premature end of test cases
-					// execution due to unsatisfied guard postcond exception check that lead to the
-					// raising of an exception/error. This is done to prevent raising exceptions
-					// when multiple preconditions are satisfied.
-					TryStmt tryCatchFail = new TryStmt();
-					tryCatchFail.setTryBlock(new BlockStmt().addStatement(assertStmt2));
-					CatchClause ccFail = new CatchClause()
-							.setParameter(new Parameter().setType("Throwable").setName("condEx"));
-					ccFail.setBody(new BlockStmt().addStatement(StaticJavaParser.parseStatement("raisedEx = condEx;")));
-					NodeList<CatchClause> ccsFail = new NodeList<CatchClause>();
-					ccsFail.add(ccFail);
-					tryCatchFail.setCatchClauses(ccsFail);
+						// Surround the block with try catch to prevent premature end of test cases
+						// execution due to unsatisfied guard postcond exception check that lead to the
+						// raising of an exception/error. This is done to prevent raising exceptions
+						// when multiple preconditions are satisfied.
+						TryStmt tryCatchFail = new TryStmt();
+						tryCatchFail.setTryBlock(new BlockStmt().addStatement(assertStmt2));
+						CatchClause ccFail = new CatchClause()
+								.setParameter(new Parameter().setType("Throwable").setName("condEx"));
+						ccFail.setBody(
+								new BlockStmt().addStatement(StaticJavaParser.parseStatement("raisedEx = condEx;")));
+						NodeList<CatchClause> ccsFail = new NodeList<CatchClause>();
+						ccsFail.add(ccFail);
+						tryCatchFail.setCatchClauses(ccsFail);
 
-					bs.addStatement(tryCatchFail);
-					cc.setBody(bs);
+						bs.addStatement(tryCatchFail);
+						cc.setBody(bs);
+					}
 				}
 			}
 		}
