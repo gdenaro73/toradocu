@@ -371,7 +371,7 @@ public class TestGenerator {
 			}
 		}
 		// Store number of Evosuite launches in csv file
-		numberOfEvosuiteLaunchesPerClassToCSV(evosuiteLaunches);
+		evosuiteBudgetsToCSV(evosuiteLaunches);
 		// Generate report
 		reportGeneration.generateReport();
 	}
@@ -454,30 +454,30 @@ public class TestGenerator {
 		}
 	}
 
-	private static void numberOfEvosuiteLaunchesPerClassToCSV(HashMap<String, Integer> evosuiteLaunches)
+	private static void evosuiteBudgetsToCSV(HashMap<String, Integer> evosuiteBudgets)
 			throws IOException {
-		File myObj = new File("numberOfEvosuiteLaunches.csv");
-		if (!myObj.exists()) {
-			myObj.createNewFile();
+		File evoBudgetsFile = new File("EvosuiteBudgets.csv");
+		if (!evoBudgetsFile.exists()) {
+			evoBudgetsFile.createNewFile();
 			try {
-				FileWriter myWriter = new FileWriter(myObj);
-				myWriter.write("class" + ";" + "launches" + System.lineSeparator());
+				FileWriter myWriter = new FileWriter(evoBudgetsFile);
+				myWriter.write("class" + ";" + "budget" + System.lineSeparator());
 				myWriter.close();
 			} catch (IOException e) {
 				log.error(
-						"An error occurred during the creation of the csv file containing the number of times Evosuite is launched per class.",
+						"An error occurred during the creation of the csv file containing the Evosuite budget per class.",
 						e);
 			}
 		}
-		for (Entry<String, Integer> launch : evosuiteLaunches.entrySet()) {
-			String clax = launch.getKey();
-			int numberOfLaunches = launch.getValue();
+		for (Entry<String, Integer> claxBudget : evosuiteBudgets.entrySet()) {
+			String clax = claxBudget.getKey();
+			int budget = claxBudget.getValue();
 			try {
-				FileWriter myWriter = new FileWriter(myObj, true);
-				myWriter.write("\"" + clax + "\"" + ";" + numberOfLaunches + System.lineSeparator());
+				FileWriter myWriter = new FileWriter(evoBudgetsFile, true);
+				myWriter.write("\"" + clax + "\"" + ";" + budget + System.lineSeparator());
 				myWriter.close();
 			} catch (IOException e) {
-				log.error("An error occurred during the filling of the csv file containing the number of times Evosuite is launched per class.", e);
+				log.error("An error occurred during the filling of the csv file containing the Evosuite budget per class.", e);
 			}
 		}
 	}
