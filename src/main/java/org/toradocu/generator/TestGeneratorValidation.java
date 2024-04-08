@@ -72,6 +72,8 @@ public class TestGeneratorValidation {
 	public static final int MAX_EVALUATORS_PER_EVOSUITE_CALL = 10;
 	public static final String VALIDATORS_FOLDER = "validation";
 	public static final String EVALUATORS_FOLDER = "evaluators";
+	private static HashMap<String, Integer> evosuiteBudgets = new HashMap<String, Integer>();
+
 	/** {@code Logger} for this class. */
 	private static final Logger log = LoggerFactory.getLogger(TestGeneratorValidation.class);
 
@@ -125,8 +127,16 @@ public class TestGeneratorValidation {
 		log.info("Going to generate validation test cases for " + targetClass + " oracles");
 
 		if (!configuration.isSkipValidationTestsGeneration()) {
+			if (evosuiteBudgets.isEmpty()) {
+				obtainEvosuiteBudgets();
+			}
+			int evosuiteBudget = 60;
+			if (evosuiteBudgets.containsKey(targetClass)) {
+				evosuiteBudget = evosuiteBudgets.get(targetClass);
+			}
+
 			// Launch EvoSuite
-			List<String> evosuiteCommand = buildEvoSuiteCommand(outputDir);
+			List<String> evosuiteCommand = buildEvoSuiteCommand(outputDir, evosuiteBudget);
 			final Path evosuiteLogFilePath = outputDir.resolve("evosuite-log-" + targetClass + ".txt");
 
 			try {
@@ -150,6 +160,22 @@ public class TestGeneratorValidation {
 		// Step 2/2: Enrich the generated test cases with assumptions and assertions
 		enrichTestWithOracle(outputDir, targetClass, specifications);
 
+	}
+
+	private static void obtainEvosuiteBudgets() {
+		File budgetFile = new File("EvosuiteBudgets.csv");
+		try {
+			List<String> classBudgets = Files.readAllLines(budgetFile.toPath());
+			for (int i = 1; i < classBudgets.size(); i++) {
+				String claxBudget = classBudgets.get(i);
+				String[] claxBudgetArray = claxBudget.split(";");
+				String clax = claxBudgetArray[0].replace("\"", "");
+				int budget = Integer.parseInt(claxBudgetArray[1]);
+				evosuiteBudgets.put(clax, budget);
+			}
+		} catch (IOException | NumberFormatException e) {
+			log.error("Error in reading Evosuite budget file! Will use default budget: 60", e);
+		}
 	}
 
 	private static void enrichTestWithOracle(Path testsDir, String targetClass,
@@ -608,18 +634,18 @@ public class TestGeneratorValidation {
 					BlockStmt bs = cc.getBody();
 					IfStmt ifUniqueGuard = new IfStmt();
 					ifUniqueGuard.setCondition(
-							StaticJavaParser.parseExpression("uniqueGuardIds_lta.contains(\"" + identifier + "\")"));					
+							StaticJavaParser.parseExpression("uniqueGuardIds_lta.contains(\"" + identifier + "\")"));
 					if (unmodeled) {
-						if(postCondCondition.isEmpty()) {
-							ifUniqueGuard.setThenStmt(new BlockStmt().addStatement(StaticJavaParser
-									.parseStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"unmodeled\");")));
+						if (postCondCondition.isEmpty()) {
+							ifUniqueGuard.setThenStmt(new BlockStmt().addStatement(StaticJavaParser.parseStatement(
+									"globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"unmodeled\");")));
 						} else {
 							IfStmt ifContractStatus = new IfStmt();
 							ifContractStatus.setCondition(StaticJavaParser.parseExpression(
 									cc.getParameter().getName() + " instanceof " + postCond.getExceptionTypeName()));
-							ifContractStatus.setThenStmt(new BlockStmt().addStatement(StaticJavaParser
-									.parseStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"unmodeled\");")));
-							ifUniqueGuard.setThenStmt(new BlockStmt().addStatement(ifContractStatus));			
+							ifContractStatus.setThenStmt(new BlockStmt().addStatement(StaticJavaParser.parseStatement(
+									"globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"unmodeled\");")));
+							ifUniqueGuard.setThenStmt(new BlockStmt().addStatement(ifContractStatus));
 						}
 						String comment2 = "Added unmodeled test: " + postCond.getDescription();
 						ifUniqueGuard.setLineComment(comment2);
@@ -937,7 +963,7 @@ public class TestGeneratorValidation {
 	 *         {@link List}{@code <}{@link String}{@code >}, suitable to be passed
 	 *         to a {@link ProcessBuilder}.
 	 */
-	private static List<String> buildEvoSuiteCommand(Path outputDir) {
+	private static List<String> buildEvoSuiteCommand(Path outputDir, int evosuiteBudget) {
 		final String targetClass = configuration.getTargetClass();
 		final List<String> retVal = new ArrayList<String>();
 		String classpathTarget = outputDir.toString();
@@ -956,7 +982,8 @@ public class TestGeneratorValidation {
 		retVal.add("16384");
 		retVal.add("-DCP=" + classpathTarget);
 		retVal.add("-Dassertions=false");
-		retVal.add("-Dsearch_budget=" + configuration.getEvoSuiteBudget());
+		// retVal.add("-Dsearch_budget=" + configuration.getEvoSuiteBudget());
+		retVal.add("-Dsearch_budget=" + evosuiteBudget);
 		retVal.add("-Dreport_dir=" + outputDir);
 		retVal.add("-Dtest_dir=" + outputDir);
 		retVal.add("-Dvirtual_fs=false");

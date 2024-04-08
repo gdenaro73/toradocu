@@ -1,5 +1,5 @@
 TORADOCU_MAIN_FOLDER=$(pwd)
-EVOSUITE_LIB_PATH=$TORADOCU_MAIN_FOLDER/lib-evosuite/evosuite-shaded-1.1.1-SNAPSHOT.jar
+EVOSUITE_LIB_PATH=$TORADOCU_MAIN_FOLDER/lib-evosuite/evosuite-shaded-1.2.1-SNAPSHOT.jar
 TEST_UTILS_LIB_PATH=$TORADOCU_MAIN_FOLDER/TestUtils.jar
 BASE_FOLDER=$TORADOCU_MAIN_FOLDER/generated-tests/testgen-experiments-results/validation-tests-data
 
