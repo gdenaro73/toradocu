@@ -257,10 +257,10 @@ public class TestGenerator {
 				
 				// We then generate the 2 evaluators that refer to the guards and the postconds
 				if (evaluatorGroups.isEmpty() || evaluatorNumber % MAX_EVALUATORS_PER_EVOSUITE_CALL == 0) {
-					evaluatorGroups.add(0, new EvaluatorGroup());
+					evaluatorGroups.add(new EvaluatorGroup());
 					// starts a new group of <evaluatorDefs, test case assertions>
 				}
-				EvaluatorGroup evaluators = evaluatorGroups.get(0);
+				EvaluatorGroup evaluators = evaluatorGroups.get(evaluatorGroups.size() - 1);
 
 				// ...an evaluator to search for a test case that satisfies the given postcondition
 				final String evaluatorBaseName = "EvoSuiteEvaluator_" + (evaluatorNumber + 1);
