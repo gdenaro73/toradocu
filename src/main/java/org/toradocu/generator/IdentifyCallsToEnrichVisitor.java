@@ -88,6 +88,8 @@ public class IdentifyCallsToEnrichVisitor extends VoidVisitorAdapter<SupportStru
 							argWanted.toString().indexOf(" " + argWanted.getName()));
 					// Replace $ with . to allow comparison of inner classes
 					argWantedString = argWantedString.replace("$", ".");
+					// Replace ... with [] to allow comparison of arrays
+					argWantedString = argWantedString.replace("...", "[]");
 					found = argMethodString.equals(argWantedString);
 					if (!found)
 						break;
