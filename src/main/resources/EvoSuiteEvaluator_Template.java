@@ -171,10 +171,19 @@ public class EvoSuiteEvaluator_Template {
 
 	private abstract class ExceptionDistanceCalculator implements DistanceCalculator {
 		public double calculate() {
-			return !(___INTERNAL__retVal_ instanceof Throwable) ? MED_DISTANCE
-					: currentExceptionCanonicalName().equals(exceptionCanonicalName()) ? 0 : BIG_DISTANCE;
+			return zeroDistanceException(___INTERNAL__retVal_) /*currentExceptionCanonicalName().equals(exceptionCanonicalName())*/
+				? 0 : !(___INTERNAL__retVal_ instanceof Throwable) ? MED_DISTANCE : BIG_DISTANCE;
 		}
 
+		boolean zeroDistanceException(Object exc) {
+			try {
+				Class<?> excClass = Class.forName(exceptionCanonicalName());
+				return excClass.isInstance(exc);
+			} catch (ClassNotFoundException e) {
+				return false;
+			}
+		}
+		
 		String currentExceptionCanonicalName() {
 			if (___INTERNAL__retVal_ == null) {
 				return null;
@@ -204,9 +213,8 @@ public class EvoSuiteEvaluator_Template {
 	private abstract class NegExceptionDistanceCalculator extends ExceptionDistanceCalculator {
 		public double calculate() {
 			String currentExcpCanonicalName = currentExceptionCanonicalName();
-			double d = ___INTERNAL__retVal_ != null && currentExcpCanonicalName.equals(exceptionCanonicalName())
-					? SMALL_DISTANCE
-					: isEvosuiteException(currentExcpCanonicalName) ? BIG_DISTANCE : 0;
+			double d = zeroDistanceException(___INTERNAL__retVal_)//___INTERNAL__retVal_ != null && currentExcpCanonicalName.equals(exceptionCanonicalName())
+					? SMALL_DISTANCE : isEvosuiteException(currentExcpCanonicalName) ? BIG_DISTANCE : 0;
 			// logOnEvosuiteConsole(this.getClass().getName() + ": " + " then distacnce is "
 			// + d);
 			return d;
