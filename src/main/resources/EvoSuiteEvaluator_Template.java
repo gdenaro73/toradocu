@@ -175,11 +175,13 @@ public class EvoSuiteEvaluator_Template {
 				? 0 : !(___INTERNAL__retVal_ instanceof Throwable) ? MED_DISTANCE : BIG_DISTANCE;
 		}
 
-		boolean zeroDistanceException(Object exc) {
+		boolean zeroDistanceException(Object candidate) {
 			try {
 				Class<?> excClass = Class.forName(exceptionCanonicalName());
-				return excClass.isInstance(exc);
+				return excClass.isInstance(candidate);
 			} catch (ClassNotFoundException e) {
+				logOnEvosuiteConsole(this.getClass().getName() + 
+						": Failed to load exception class: " + e);
 				return false;
 			}
 		}
@@ -198,7 +200,7 @@ public class EvoSuiteEvaluator_Template {
 					classOfretVal_ = classOfretVal_.getSuperclass();
 				}
 			} catch (ClassNotFoundException e) {
-				logOnEvosuiteConsole("this.getClass().getName()"
+				logOnEvosuiteConsole(this.getClass().getName()
 						+ ": failed to dynamically load class org.evosuite.runtime.mock.OverrideMock: " + e);
 			}
 			// logOnEvosuiteConsole(this.getClass().getName() + ": " + " canonicalName is "
