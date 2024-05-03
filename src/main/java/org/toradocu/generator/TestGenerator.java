@@ -882,9 +882,9 @@ public class TestGenerator {
 		retVal.add("-Dtest_dir=" + testsDir);
 		retVal.add("-Dvirtual_fs=false");
 		retVal.add("-Dselection_function=ROULETTEWHEEL");
-		//retVal.add("-Dcriterion=PATHCONDITION");
-		retVal.add("-Dcriterion=PATHCONDITION:BRANCH:EXCEPTION:METHOD:METHODNOEXCEPTION:CBRANCH");
-		retVal.add("-Demit_tests_for_criterion=PATHCONDITION");
+		retVal.add("-Dcriterion=PATHCONDITION");
+		//retVal.add("-Dcriterion=PATHCONDITION:BRANCH:EXCEPTION:METHOD:METHODNOEXCEPTION:CBRANCH");
+		//retVal.add("-Demit_tests_for_criterion=PATHCONDITION");
 		retVal.add("-Dpath_condition_target=LAST_ONLY");
 		retVal.add("-Dpost_condition_check=true");
 		retVal.add("-Dsushi_statistics=true");
