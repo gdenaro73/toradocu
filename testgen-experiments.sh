@@ -15,6 +15,6 @@ TESTS='testgen'
 
 # Run Toradocu and collect statistics
 # ./gradlew --rerun-tasks --info $TESTS
-./gradlew --info $TESTS
+./gradlew --rerun-tasks --info $TESTS
 
 echo Done. See results at build/reports/tests/$TESTS/index.html, and see test cases at generated-tests/testgen-experiments-results/test-generation-data
