@@ -90,6 +90,10 @@ public class IdentifyCallsToEnrichVisitor extends VoidVisitorAdapter<SupportStru
 					argWantedString = argWantedString.replace("$", ".");
 					// Replace ... with [] to allow comparison of arrays
 					argWantedString = argWantedString.replace("...", "[]");
+					// Manage type parameters
+					if (argWantedString.contains("<?>")) {
+						argMethodString = argMethodString.replaceAll("<[a-zA-Z0-9?.$ ]+>", "<?>");
+					}
 					found = argMethodString.equals(argWantedString);
 					if (!found)
 						break;
