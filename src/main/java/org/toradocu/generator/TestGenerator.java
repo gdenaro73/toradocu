@@ -207,9 +207,9 @@ public class TestGenerator {
 			targetSpecs.addAll(specification.getThrowsSpecifications());
 			targetSpecs.addAll(specification.getPostSpecifications());
 			
-			ArrayList<String> guards = new ArrayList<>();
 			for (Specification spec : targetSpecs) {
-				guards.clear();
+				ArrayList<String> guards = new ArrayList<>();
+				ArrayList<String> excludingGuards = new ArrayList<>();
 				
 				// The perspective test shall satisfy the precondition of the focal spec
 				boolean specGuardEmpty = false;
@@ -238,8 +238,9 @@ public class TestGenerator {
 					}
 					String throwsGuard = thowsSpec.getGuard().getConditionText();
 					if (throwsGuard != null && !throwsGuard.isEmpty()) {
-						String precondStr = "!(" + throwsGuard + ")"; // negate the guard of the throws spec
-						guards.add(precondStr);
+						excludingGuards.add(throwsGuard);
+						/*String precondStr = "!(" + throwsGuard + ")"; // negate the guard of the throws spec
+						guards.add(precondStr);*/
 					}
 				}
 
@@ -271,8 +272,8 @@ public class TestGenerator {
 				final String testName = testBaseName + (unmodeled ? "_unmodeled" : "") + "_Test";
 
 				evaluators.addItem(evaluatorQualifiedName, testName, method, spec, true);
-				createEvaluator(method, guards.toArray(new String[0]), new String[]{postCond}, spec instanceof ThrowsSpecification,
-						false, evaluatorName, evaluatorsDir, classpathTarget);
+				createEvaluator(method, guards.toArray(new String[0]), excludingGuards.toArray(new String[0]), new String[]{postCond}, 
+						spec instanceof ThrowsSpecification, false, evaluatorName, evaluatorsDir, classpathTarget);
 				TestGeneratorSummaryData._I().incGeneratedPositiveEvaluators();
 				
 				if (!unmodeled) {
@@ -282,9 +283,8 @@ public class TestGenerator {
 					final String testForViolationName = testBaseName + "_failure_Test";
 
 					evaluators.addItem(evaluatorForViolationQualifiedName, testForViolationName, method, spec, false);
-					createEvaluator(method, guards.toArray(new String[0]), new String[]{postCond},
-							spec instanceof ThrowsSpecification, true, evaluatorForViolationName, evaluatorsDir,
-							classpathTarget);
+					createEvaluator(method, guards.toArray(new String[0]), excludingGuards.toArray(new String[0]), new String[]{postCond},
+							spec instanceof ThrowsSpecification, true, evaluatorForViolationName, evaluatorsDir, classpathTarget);
 					TestGeneratorSummaryData._I().incGeneratedNegativeEvaluators();
 					/*
 					 * RATIONALE: if postCond != empty - guardUnmodeled: possibly we may violate the
@@ -884,7 +884,7 @@ public class TestGenerator {
 		retVal.add("-Dselection_function=ROULETTEWHEEL");
 		retVal.add("-Dcriterion=PATHCONDITION");
 		//retVal.add("-Dcriterion=PATHCONDITION:BRANCH:EXCEPTION:METHOD:METHODNOEXCEPTION:CBRANCH");
-		//retVal.add("-Demit_tests_for_criterion=PATHCONDITION");
+		retVal.add("-Demit_tests_for_criterion=PATHCONDITION");
 		retVal.add("-Dpath_condition_target=LAST_ONLY");
 		retVal.add("-Dpost_condition_check=true");
 		retVal.add("-Dsushi_statistics=true");
@@ -945,7 +945,7 @@ public class TestGenerator {
 	 * @param classpathForCompilation
 	 * @param lookForPostCondViolation
 	 */
-	private static void createEvaluator(DocumentedExecutable method, String guards[], String postConds[],
+	private static void createEvaluator(DocumentedExecutable method, String guards[], String excludingGuards[], String postConds[],
 			boolean isThrows, boolean lookForPostCondViolation, String evaluatorName, Path outputDir,
 			String classpathForCompilation) {
 		Checks.nonNullParameter(method, "method");
@@ -966,7 +966,7 @@ public class TestGenerator {
 				.ifPresent(c -> c.setName(evaluatorName));
 
 		// Customize and emit the evaluator
-		new EvaluatorModifierVisitor().visit(cu, new EvaluatorModifierVisitor.InstrumentationData(method, guards,
+		new EvaluatorModifierVisitor().visit(cu, new EvaluatorModifierVisitor.InstrumentationData(method, guards, excludingGuards,
 				postConds, isThrows, lookForPostCondViolation));
 		final Path evaluatorFolder = outputDir.resolve(packageName.replace('.', '/'));
 		final Path evaluatorPath = evaluatorFolder.resolve(evaluatorName + ".java");

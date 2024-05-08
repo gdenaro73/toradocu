@@ -6,11 +6,9 @@ import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.BinaryExpr.Operator;
 import com.github.javaparser.ast.expr.BooleanLiteralExpr;
-import com.github.javaparser.ast.expr.CastExpr;
 import com.github.javaparser.ast.expr.DoubleLiteralExpr;
 import com.github.javaparser.ast.expr.EnclosedExpr;
 import com.github.javaparser.ast.expr.Expression;
-import com.github.javaparser.ast.expr.UnaryExpr;
 import com.github.javaparser.ast.stmt.Statement;
 import com.github.javaparser.ast.visitor.ModifierVisitor;
 
@@ -49,16 +47,18 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 	public static class InstrumentationData {
 		private final DocumentedExecutable method;
 		private final String[] preconds;
+		private final String[] excludingGuards;
 		private final String[] postconds;
 		private final boolean isThrows;
 		private final boolean lookForPostCondViolation;
-		InstrumentationData(DocumentedExecutable method, String[] preconds, String[] postconds, boolean isThrows, boolean lookForPostCondViolation) {
+		InstrumentationData(DocumentedExecutable method, String[] preconds, String[] excludingGuards, String[] postconds, boolean isThrows, boolean lookForPostCondViolation) {
 			Checks.nonNullParameter(method, "method");
 			Checks.nonNullParameter(preconds, "preconds");
 			Checks.nonNullParameter(postconds, "postconds");
 
 			this.method = method;
 			this.preconds = preconds;
+			this.excludingGuards = excludingGuards;
 			this.postconds = postconds;
 			this.isThrows = isThrows;
 			this.lookForPostCondViolation = lookForPostCondViolation;
@@ -85,12 +85,13 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		try {
 			String methodName = methodDeclaration.getName().asString();
 			if (methodName.equals("populateCalculators_preconds")) {
-				addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.preconds, false);    		
+				addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.preconds, false, false);    		
+				addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.excludingGuards, true, false);    		
 			} else if (methodName.equals("populateCalculators_postconds") && instrumentationData.postconds.length > 0) {
 				if (instrumentationData.isThrows) {
 					addExceptionDistanceCalculator(methodDeclaration, instrumentationData.method, instrumentationData.postconds[0], instrumentationData.lookForPostCondViolation);    		
 				} else {
-					addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.postconds, instrumentationData.lookForPostCondViolation);    		
+					addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.postconds, instrumentationData.lookForPostCondViolation, instrumentationData.lookForPostCondViolation);    		
 				}
 			} else if (methodName.equals("test0") || methodName.equals("test1")) {
 				// Set the correct input parameters for the newly created evaluator
@@ -142,8 +143,8 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(1, StaticJavaParser.parseStatement(code)));
 	}
 
-	private void addConditionDistanceCalculators(MethodDeclaration methodDeclaration, DocumentedExecutable documentedExecutable, String[] conds, boolean lookForFailure) {
-		if (lookForFailure) {
+	private void addConditionDistanceCalculators(MethodDeclaration methodDeclaration, DocumentedExecutable documentedExecutable, String[] conds, boolean aimToNotSatisfiedConds, boolean evaluateByDisjunction) {
+		if (evaluateByDisjunction) {
 			String code = "DistanceAlgo algo = computeDistanceWithDisjunctiveAlgo();";
 			methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.replace(blockStmt.getStatement(0), StaticJavaParser.parseStatement(code)));			
 		}
@@ -159,7 +160,7 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 					replace("receiverObjectID", RECEIVEROBJECT_FIELD).
 					replace("args", ARGS_FIELD).
 					replace("methodResultID", RETVAL_FIELD);
-			String typeOfCalculator = lookForFailure ? "NegConditionDistanceCalculator" : "ConditionDistanceCalculator";
+			String typeOfCalculator = aimToNotSatisfiedConds ? "NegConditionDistanceCalculator" : "ConditionDistanceCalculator";
 			String code = "algo.calculators.add(new " +  typeOfCalculator + "() {\n" + 
 					"    boolean condition()  {\n" + 
 					"        return " + formattedCond + ";\n" + 

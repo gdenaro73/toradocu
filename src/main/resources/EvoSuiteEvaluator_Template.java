@@ -160,12 +160,28 @@ public class EvoSuiteEvaluator_Template {
 
 	private abstract class NegConditionDistanceCalculator extends ConditionDistanceCalculator {
 		public double calculate() {
-			return ___INTERNAL__retVal_ instanceof Throwable ? 0
-					: !condition() ? 0 : isNaN(cdistance()) ? MED_DISTANCE : SMALL_DISTANCE + abs(cdistance());
-			// ___INTERNAL__retVal_ is always null for preconditions (test0),
-			// but it can be Throwable for postconditions(test1) if the method under
-			// evaluation is throwing exceptions,
-			// meaning that the postcondition cannot be evaluated
+			try {
+				return ___INTERNAL__retVal_ instanceof Throwable ? 0
+						: !condition() ? 0 : isNaN(cdistance()) ? MED_DISTANCE : SMALL_DISTANCE + abs(cdistance());
+				// ___INTERNAL__retVal_ is always null for preconditions (test0),
+				// but it can be Throwable for postconditions(test1) if the method under
+				// evaluation is throwing exceptions,
+				// meaning that the postcondition cannot be evaluated
+			} catch (Throwable e) {
+				/* if the evaluation of condition() throws any exception then 
+				 * we still assume the same result as in cases when condition is not true.
+				 * This is used for:
+				 * 	- preconditions that shall be excluded as they trigger other oracles, and
+				 *    then if condition() throws exception we are in a case that we shall 
+				 *    consider because the other oracle is not triggered
+				 *    --> NegPostConditionDistanceCalculator.calculate() is satisfied (return 0)
+				 *  - postconditions that may fail (to spot failures), and then
+				 *    if condition() throws exception we are in a case that we shall 
+				 *    consider because the postcondition is not respected
+				 *    --> NegPostConditionDistanceCalculator.calculate() is satisfied (return 0)
+				 */
+				return 0d; 
+			}
 		}
 	}
 
