@@ -7,6 +7,7 @@ import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.PackageDeclaration;
+import com.github.javaparser.ast.body.BodyDeclaration;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.ConstructorDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
@@ -45,6 +46,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Optional;
 
 import javax.tools.JavaCompiler;
 import javax.tools.ToolProvider;
@@ -79,14 +81,17 @@ public class TestGenerator {
 
 	/** {@code Logger} for this class. */
 	private static final Logger log = LoggerFactory.getLogger(TestGenerator.class);
-	
-	/* We generate a test case for a given contract (i.e., test case is related to a "focal" contract). 
-	 * In turn the contract relates to a method, which thus is the focal method of the test case.
+
+	/*
+	 * We generate a test case for a given contract (i.e., test case is related to a
+	 * "focal" contract). In turn the contract relates to a method, which thus is
+	 * the focal method of the test case.
 	 */
 	private static class TestCaseInfo {
 		String testName;
 		Specification focalContract;
 		DocumentedExecutable focalMethod;
+
 		TestCaseInfo(String testName, DocumentedExecutable focalMethod, Specification focalContract) {
 			this.testName = testName;
 			this.focalMethod = focalMethod;
@@ -99,24 +104,30 @@ public class TestGenerator {
 		String evaluatorClassName;
 		String targetClassName;
 		String targetMethodName;
+
 		EvaluatorInfo(String evaluatorClassName, String targetClassName, DocumentedExecutable method) {
 			this.evaluatorClassName = evaluatorClassName;
 			this.targetClassName = targetClassName;
 			this.targetMethodName = bytecodeStyleSignature(method);
 		}
+
 		String asEvosuiteParameter() {
 			return targetClassName + "," + targetMethodName + "," + evaluatorClassName;
 		}
 	}
 
-	/* An evaluator group includes a set of evaluators that shall be passed to evosuite in a single run,
-	 * and the information on the test cases that we expect to find in the file system as a result. 
-	 * After evosuite terminates, we can check the presence of the corresponding test
-	 * cases by name, and can associate them with corresponding oracles based on the TestCaseInfo data. */
+	/*
+	 * An evaluator group includes a set of evaluators that shall be passed to
+	 * evosuite in a single run, and the information on the test cases that we
+	 * expect to find in the file system as a result. After evosuite terminates, we
+	 * can check the presence of the corresponding test cases by name, and can
+	 * associate them with corresponding oracles based on the TestCaseInfo data.
+	 */
 	private static class EvaluatorGroup {
 		ArrayList<EvaluatorInfo> evaluators = new ArrayList<>();
 		ArrayList<TestCaseInfo> expectedTestCases = new ArrayList<>();
 		int numOfFocalContracts = 0;
+
 		String asEvosuiteParameter() {
 			if (evaluators.isEmpty()) {
 				return "";
@@ -127,9 +138,11 @@ public class TestGenerator {
 			}
 			return s;
 		}
-		void addItem(String evaluatorName, String correspondingTestName, DocumentedExecutable method, Specification spec, boolean countAsNewFocalContract) {
+
+		void addItem(String evaluatorName, String correspondingTestName, DocumentedExecutable method,
+				Specification spec, boolean countAsNewFocalContract) {
 			evaluators.add(new EvaluatorInfo(evaluatorName, method.getDeclaringClass().getCanonicalName(), method));
-			expectedTestCases.add(new TestCaseInfo(correspondingTestName, method, spec));	
+			expectedTestCases.add(new TestCaseInfo(correspondingTestName, method, spec));
 			if (countAsNewFocalContract) {
 				++numOfFocalContracts;
 			}
@@ -164,13 +177,63 @@ public class TestGenerator {
 	 */
 	public static void createTests(Map<DocumentedExecutable, OperationSpecification> specifications)
 			throws IOException {
+		// Check for abstract class and skip generation if abstract
+		String claxPathStr = configuration.getTargetClass().replace(".", "/");
+		String claxToSearch = "";
+		String innerClaxToSearch = "";
+		if (claxPathStr.contains("$")) {
+			claxToSearch = claxPathStr.substring(claxPathStr.lastIndexOf("/") + 1, claxPathStr.lastIndexOf("$"));
+			innerClaxToSearch = claxPathStr.substring(claxPathStr.lastIndexOf("$") + 1);
+			claxPathStr = claxPathStr.substring(0, claxPathStr.lastIndexOf("$"));
+		} else {
+			claxToSearch = claxPathStr.substring(claxPathStr.lastIndexOf("/") + 1);
+		}
+		String testedClaxDir = configuration.sourceDir.toString() + "/" + claxPathStr + ".java";
+		File testedClax = new File(testedClaxDir);
+		CompilationUnit cu = null;
+		try {
+			cu = StaticJavaParser.parse(testedClax);
+		} catch (FileNotFoundException e) {
+			e.printStackTrace();
+		}
+		Optional<ClassOrInterfaceDeclaration> oClax = cu.getClassByName(claxToSearch);
+		if (oClax.isPresent()) {
+			ClassOrInterfaceDeclaration clax = oClax.get();
+			if (innerClaxToSearch.isEmpty()) {
+				if (clax.isAbstract()) {
+					log.warn("Abstract class found! Oracle generation skipped.");
+					return;
+				}
+			} else {
+				// Manage inner classes
+				NodeList<BodyDeclaration<?>> members = clax.getMembers();
+				boolean found = false;
+				for (BodyDeclaration<?> member : members) {
+					if (member.isClassOrInterfaceDeclaration()) {
+						ClassOrInterfaceDeclaration innerClax = member.asClassOrInterfaceDeclaration();
+						if (innerClax.getName().asString().equals(innerClaxToSearch))
+							if (!innerClax.isAbstract())
+								found = true;
+						break;
+					}
+				}
+				if (!found) {
+					log.warn("Abstract inner class found! Oracle generation skipped.");
+					return;
+				}
+			}
+		} else {
+			log.error("Class not found in class file! Are you sure it's not an interface?");
+			return;
+		}
+
 		Checks.nonNullParameter(specifications, "specifications");
-		
+
 		if (specifications.isEmpty()) {
 			log.error("Test generation skipedd, as the set of specs is empty");
 			return;
 		}
-		
+
 		// Create output directory where evaluators are saved.
 		final Path evaluatorsDir = Paths.get(configuration.getTestOutputDir()).resolve(EVALUATORS_FOLDER);
 		final boolean evaluatorsDirCreationSucceeded = createOutputDir(evaluatorsDir.toString(), true);
@@ -178,7 +241,7 @@ public class TestGenerator {
 			log.error("Test generation failed, cannot create dir:" + evaluatorsDir);
 			return;
 		}
-		
+
 		// Create output directory where test cases are saved.
 		final Path testsDir = Paths.get(configuration.getTestOutputDir()).resolve(TESTCASES_FOLDER);
 		final boolean testsDirCreationSucceeded = createOutputDir(testsDir.toString(), true);
@@ -197,7 +260,8 @@ public class TestGenerator {
 
 		for (DocumentedExecutable method : specifications.keySet()) {
 			String packageName = method.getDeclaringClass().getPackage().getName();
-			if (!createOutputDir(evaluatorsDir + File.separator + packageName.replace('.', File.separator.charAt(0)), false)) {
+			if (!createOutputDir(evaluatorsDir + File.separator + packageName.replace('.', File.separator.charAt(0)),
+					false)) {
 				throw new RuntimeException(
 						"Problems with creating package dir: " + packageName.replace('.', File.separator.charAt(0)));
 			}
@@ -206,7 +270,6 @@ public class TestGenerator {
 			ArrayList<Specification> targetSpecs = new ArrayList<>();
 			targetSpecs.addAll(specification.getThrowsSpecifications());
 			targetSpecs.addAll(specification.getPostSpecifications());
-			
 			for (Specification spec : targetSpecs) {
 				ArrayList<String> guards = new ArrayList<>();
 				ArrayList<String> excludingGuards = new ArrayList<>();
@@ -221,7 +284,7 @@ public class TestGenerator {
 				} catch (UnmodeledGuardException e) {
 					unmodeledGuard = true;
 				}
-				
+
 				// The perspective test shall satisfy all preconditions of the method
 				for (PreSpecification precond : specification.getPreSpecifications()) {
 					String precondGuard = precond.getGuard().getConditionText();
@@ -229,7 +292,7 @@ public class TestGenerator {
 						guards.add(precondGuard);
 					}
 				}
-				
+
 				// The perspective test shall not hit any throws-spec (but the current one, if
 				// the current one is a throws-spec)
 				for (ThrowsSpecification thowsSpec : specification.getThrowsSpecifications()) {
@@ -255,7 +318,7 @@ public class TestGenerator {
 					continue;
 				}
 				boolean unmodeled = unmodeledGuard || postCond.isEmpty();
-				
+
 				// We then generate the 2 evaluators that refer to the guards and the postconds
 				if (evaluatorGroups.isEmpty() || evaluatorNumber % MAX_EVALUATORS_PER_EVOSUITE_CALL == 0) {
 					evaluatorGroups.add(new EvaluatorGroup());
@@ -263,11 +326,14 @@ public class TestGenerator {
 				}
 				EvaluatorGroup evaluators = evaluatorGroups.get(evaluatorGroups.size() - 1);
 
-				// ...an evaluator to search for a test case that satisfies the given postcondition
+				// ...an evaluator to search for a test case that satisfies the given
+				// postcondition
 				final String evaluatorBaseName = "EvoSuiteEvaluator_" + (evaluatorNumber + 1);
-				final String evaluatorBaseQualifiedName =  (packageName.isEmpty() ? "" : packageName + ".") + evaluatorBaseName;
+				final String evaluatorBaseQualifiedName = (packageName.isEmpty() ? "" : packageName + ".")
+						+ evaluatorBaseName;
 				String evaluatorName = evaluatorBaseName + (unmodeled ? "_unmodeled" : "");
-				String evaluatorQualifiedName = evaluatorBaseQualifiedName + (unmodeled ? "_unmodeled" : "");;
+				String evaluatorQualifiedName = evaluatorBaseQualifiedName + (unmodeled ? "_unmodeled" : "");
+				;
 				final String testBaseName = configuration.getTargetClass() + "_" + (evaluatorNumber + 1);
 				final String testName = testBaseName + (unmodeled ? "_unmodeled" : "") + "_Test";
 
@@ -275,9 +341,10 @@ public class TestGenerator {
 				createEvaluator(method, guards.toArray(new String[0]), excludingGuards.toArray(new String[0]), new String[]{postCond}, 
 						spec instanceof ThrowsSpecification, false, evaluatorName, evaluatorsDir, classpathTarget);
 				TestGeneratorSummaryData._I().incGeneratedPositiveEvaluators();
-				
+
 				if (!unmodeled) {
-					// ...an evaluator to search for a test case that violates the given postcondition
+					// ...an evaluator to search for a test case that violates the given
+					// postcondition
 					final String evaluatorForViolationName = evaluatorBaseName + "_failure";
 					final String evaluatorForViolationQualifiedName = evaluatorBaseQualifiedName + "_failure";
 					final String testForViolationName = testBaseName + "_failure_Test";
@@ -313,10 +380,10 @@ public class TestGenerator {
 
 		HashMap<String, Integer> evosuiteLaunches = new HashMap<String, Integer>();
 		for (int i = 0; i < evaluatorGroups.size(); ++i) {
-			
+
 			int evosuiteBudget = evaluatorGroups.get(i).numOfFocalContracts * configuration.getEvoSuiteBudget();
 			evosuiteBudget = evosuiteBudget < 60 ? 60 : evosuiteBudget;
-			
+
 			// Count Evosuite budget per single class and store it
 			if (evosuiteLaunches.containsKey(configuration.getTargetClass())) {
 				int tmpBudget = evosuiteLaunches.get(configuration.getTargetClass());
@@ -324,17 +391,15 @@ public class TestGenerator {
 			} else {
 				evosuiteLaunches.put(configuration.getTargetClass(), evosuiteBudget);
 			}
-					
+
 			/*
-			// Count number of Evosuite launchs per single class and store it
-			if (evosuiteLaunches.containsKey(configuration.getTargetClass())) {
-				int launches = evosuiteLaunches.get(configuration.getTargetClass());
-				evosuiteLaunches.put(configuration.getTargetClass(), launches + 1);
-			} else {
-				evosuiteLaunches.put(configuration.getTargetClass(), 1);
-			}
-			*/
-		
+			 * // Count number of Evosuite launchs per single class and store it if
+			 * (evosuiteLaunches.containsKey(configuration.getTargetClass())) { int launches
+			 * = evosuiteLaunches.get(configuration.getTargetClass());
+			 * evosuiteLaunches.put(configuration.getTargetClass(), launches + 1); } else {
+			 * evosuiteLaunches.put(configuration.getTargetClass(), 1); }
+			 */
+
 			// Launch EvoSuite
 			List<String> evosuiteCommand = buildEvoSuiteCommand(evaluatorGroups.get(i).asEvosuiteParameter(),
 					evaluatorsDir, testsDir, evosuiteBudget);
@@ -359,8 +424,9 @@ public class TestGenerator {
 			// Step 3/3: Enrich the generated test cases with assumptions and assertions
 			ArrayList<TestCaseInfo> assertionsToAddInTestCases = evaluatorGroups.get(i).expectedTestCases;
 			for (TestCaseInfo testCaseInfo : assertionsToAddInTestCases) {
-				try{
-					enrichTestWithOracle(testsDir, testCaseInfo.testName, testCaseInfo.focalMethod, testCaseInfo.focalContract, specifications);
+				try {
+					enrichTestWithOracle(testsDir, testCaseInfo.testName, testCaseInfo.focalMethod,
+							testCaseInfo.focalContract, specifications);
 					reportGeneration.buildReport(testsDir, testCaseInfo.testName, configuration.getTargetClass(),
 							testCaseInfo.focalMethod.getSignature(), testCaseInfo.focalContract);
 				} catch (ParseProblemException e) {
@@ -419,10 +485,14 @@ public class TestGenerator {
 		return postCond;
 	}
 
-	private static class EmptyGuardException extends Exception { }
-	private static class UnmodeledGuardException extends Exception { }
-	
-	private static String getGuardAsString(Specification spec, DocumentedExecutable method, ArrayList<Specification> targetSpecs) throws EmptyGuardException, UnmodeledGuardException {
+	private static class EmptyGuardException extends Exception {
+	}
+
+	private static class UnmodeledGuardException extends Exception {
+	}
+
+	private static String getGuardAsString(Specification spec, DocumentedExecutable method,
+			ArrayList<Specification> targetSpecs) throws EmptyGuardException, UnmodeledGuardException {
 		String grd = spec.getGuard().getConditionText();
 		if (grd != null && !grd.isEmpty()) {
 			log.debug("* Method " + configuration.getTargetClass() + "." + method.getSignature()
@@ -435,8 +505,8 @@ public class TestGenerator {
 					+ ": Unguarded spec found: " + spec);
 			if (spec instanceof ThrowsSpecification) {
 				if (targetSpecs.size() > 1)
-					log.error("Method " + configuration.getTargetClass() + "." + method.getSignature()
-							+ ": We have " + targetSpecs.size()
+					log.error("Method " + configuration.getTargetClass() + "." + method.getSignature() + ": We have "
+							+ targetSpecs.size()
 							+ " specs. However, it does not make sense to have more than a spec when there is an unguarded thorws-spec.");
 				log.error("** SPECS ARE: " + targetSpecs);
 				TestGeneratorSummaryData._I().incTestGenerationErrors();
@@ -454,8 +524,7 @@ public class TestGenerator {
 		}
 	}
 
-	private static void evosuiteBudgetsToCSV(HashMap<String, Integer> evosuiteBudgets)
-			throws IOException {
+	private static void evosuiteBudgetsToCSV(HashMap<String, Integer> evosuiteBudgets) throws IOException {
 		File evoBudgetsFile = new File("EvosuiteBudgets.csv");
 		if (!evoBudgetsFile.exists()) {
 			evoBudgetsFile.createNewFile();
@@ -477,7 +546,9 @@ public class TestGenerator {
 				myWriter.write("\"" + clax + "\"" + ";" + budget + System.lineSeparator());
 				myWriter.close();
 			} catch (IOException e) {
-				log.error("An error occurred during the filling of the csv file containing the Evosuite budget per class.", e);
+				log.error(
+						"An error occurred during the filling of the csv file containing the Evosuite budget per class.",
+						e);
 			}
 		}
 	}
@@ -794,7 +865,13 @@ public class TestGenerator {
 			callExpr = callExpr.asAssignExpr().getValue();
 		}
 		if (!callExpr.isMethodCallExpr() && !callExpr.isObjectCreationExpr()) {
-			throw new RuntimeException("This type of target call is not handled yet: " + callExpr);
+			// Manage case in which the return type is explicitly casted
+			if (callExpr.isCastExpr()) {
+				callExpr = callExpr.asCastExpr().getExpression();
+			}
+			if (!callExpr.isMethodCallExpr() && !callExpr.isObjectCreationExpr()) {
+				throw new RuntimeException("This type of target call is not handled yet: " + callExpr);
+			}
 		}
 		if (callExpr.isMethodCallExpr() && callExpr.asMethodCallExpr().getScope().isPresent()) {
 			ret = ret.replace("receiverObjectID", callExpr.asMethodCallExpr().getScope().get().toString());
@@ -858,7 +935,8 @@ public class TestGenerator {
 	 *         {@link List}{@code <}{@link String}{@code >}, suitable to be passed
 	 *         to a {@link ProcessBuilder}.
 	 */
-	private static List<String> buildEvoSuiteCommand(String evaluatorDefsForEvoSuite, Path outputDir, Path testsDir, int evosuiteBudget) {
+	private static List<String> buildEvoSuiteCommand(String evaluatorDefsForEvoSuite, Path outputDir, Path testsDir,
+			int evosuiteBudget) {
 		final String targetClass = configuration.getTargetClass();
 		final List<String> retVal = new ArrayList<String>();
 		String classpathTarget = outputDir.toString();
@@ -866,17 +944,17 @@ public class TestGenerator {
 			classpathTarget += ":" + cp.getPath();
 		}
 		retVal.add(configuration.getJava8path());
-		retVal.add("-Xmx4G");
+		retVal.add("-Xmx16G"); //4G
 		retVal.add("-jar");
 		retVal.add(configuration.getEvoSuiteJar());
 		retVal.add("-class");
 		retVal.add(targetClass);
 		retVal.add("-mem");
-		retVal.add("2048");
+		retVal.add("16384"); //2048
 		retVal.add("-DCP=" + classpathTarget);
 		retVal.add("-Dassertions=false");
 		// retVal.add("-Dglobal_timeout=" + configuration.getEvoSuiteBudget());
-		//retVal.add("-Dsearch_budget=" + configuration.getEvoSuiteBudget());
+		// retVal.add("-Dsearch_budget=" + configuration.getEvoSuiteBudget());
 		retVal.add("-Dsearch_budget=" + evosuiteBudget);
 		retVal.add("-Dreport_dir=" + outputDir);
 		retVal.add("-Dtest_dir=" + testsDir);
@@ -951,7 +1029,7 @@ public class TestGenerator {
 		Checks.nonNullParameter(method, "method");
 		Checks.nonNullParameter(guards, "guardStrings");
 		Checks.nonNullParameter(evaluatorName, "evaluatorName");
-		
+
 		final InputStream evaluatorTemplate = ClassLoader.getSystemResourceAsStream(EVALUATOR_TEMPLATE_NAME + ".java");
 		CompilationUnit cu = StaticJavaParser.parse(evaluatorTemplate);
 

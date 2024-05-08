@@ -96,7 +96,7 @@ public enum Configuration {
 	private boolean testGeneration = false;
 
 	@Parameter(names = "--java8path", description = "The system path to execute java8 jvm, needed to run evosuite for test generation", arity = 1)
-	private String java8path = "/Library/Java/JavaVirtualMachines/jdk1.8.0_91.jdk/Contents/Home/bin/java";
+	private String java8path = "/Library/Java/JavaVirtualMachines/jdk1.8.0_131.jdk/Contents/Home/bin/java";
 
 	@Parameter(names = "--test-output-dir", description = "Specifies a directory where Toradocu will store the generated test cases")
 	private String testOutputDir = "tests";

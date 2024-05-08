@@ -9,6 +9,7 @@ import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.Modifier.Keyword;
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.NodeList;
+import com.github.javaparser.ast.body.BodyDeclaration;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
@@ -105,6 +106,56 @@ public class TestGeneratorValidation {
 	 */
 	public static void createTests(Map<DocumentedExecutable, OperationSpecification> specifications)
 			throws IOException {
+		// Check for abstract class and skip generation if abstract
+		String claxPathStr = configuration.getTargetClass().replace(".", "/");
+		String claxToSearch = "";
+		String innerClaxToSearch = "";
+		if (claxPathStr.contains("$")) {
+			claxToSearch = claxPathStr.substring(claxPathStr.lastIndexOf("/") + 1, claxPathStr.lastIndexOf("$"));
+			innerClaxToSearch = claxPathStr.substring(claxPathStr.lastIndexOf("$") + 1);
+			claxPathStr = claxPathStr.substring(0, claxPathStr.lastIndexOf("$"));
+		} else {
+			claxToSearch = claxPathStr.substring(claxPathStr.lastIndexOf("/") + 1);
+		}
+		String testedClaxDir = configuration.sourceDir.toString() + "/" + claxPathStr + ".java";
+		File testedClax = new File(testedClaxDir);
+		CompilationUnit cu = null;
+		try {
+			cu = StaticJavaParser.parse(testedClax);
+		} catch (FileNotFoundException e) {
+			e.printStackTrace();
+		}
+		Optional<ClassOrInterfaceDeclaration> oClax = cu.getClassByName(claxToSearch);
+		if (oClax.isPresent()) {
+			ClassOrInterfaceDeclaration clax = oClax.get();
+			if (innerClaxToSearch.isEmpty()) {
+				if (clax.isAbstract()) {
+					log.warn("Abstract class found! Oracle generation skipped.");
+					return;
+				}
+			} else {
+				// Manage inner classes
+				NodeList<BodyDeclaration<?>> members = clax.getMembers();
+				boolean found = false;
+				for (BodyDeclaration<?> member : members) {
+					if (member.isClassOrInterfaceDeclaration()) {
+						ClassOrInterfaceDeclaration innerClax = member.asClassOrInterfaceDeclaration();
+						if (innerClax.getName().asString().equals(innerClaxToSearch))
+							if (!innerClax.isAbstract())
+								found = true;
+						break;
+					}
+				}
+				if (!found) {
+					log.warn("Abstract inner class found! Oracle generation skipped.");
+					return;
+				}
+			}
+		} else {
+			log.error("Class not found in class file! Are you sure it's not an interface?");
+			return;
+		}
+
 		Checks.nonNullParameter(specifications, "specifications");
 
 		// Output Dir
@@ -320,13 +371,13 @@ public class TestGeneratorValidation {
 						contracts.add(methodContractInit);
 						if (methodCallsToEnrich.size() != 0) {
 							bs.addStatement(
-									"globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"not-executed\");");
+									"globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"not_executed\");");
 							identifier = enrichTestWithOracle(spec, targetMethod, existingPrecondChecks,
 									methodCallsToEnrich, os.getThrowsSpecifications(), allSpecs, identifier,
 									specificationCounter);
 						} else {
 							bs.addStatement(
-									"globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"not-present\");");
+									"globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"not_present\");");
 						}
 						specificationCounter++;
 					}
@@ -490,7 +541,7 @@ public class TestGeneratorValidation {
 			if (clause.contains("null.")) {
 				String comment = "Skipped check due to non satisfiable guard: " + clause + " " + spec.getDescription();
 				addSkipClause(precondSatisfiedInsertionPoint, targetCall, identifier, specificationCounter,
-						"not-executable", comment);
+						"not_executable", comment);
 				identifier++;
 				continue;
 			}
@@ -556,7 +607,7 @@ public class TestGeneratorValidation {
 
 		IfStmt ifContractStatus = new IfStmt();
 		ifContractStatus.setCondition(StaticJavaParser
-				.parseExpression("globalGuardsIds_lta.get(\"" + specificationCounter + "\").equals(\"not-executed\")"));
+				.parseExpression("globalGuardsIds_lta.get(\"" + specificationCounter + "\").equals(\"not_executed\")"));
 		ifContractStatus.setThenStmt(new BlockStmt()
 				.addStatement("globalGuardsIds_lta.put(\"" + specificationCounter + "\",\"" + type + "\");"));
 		insertionPoint.add(ifContractStatus);
@@ -899,7 +950,13 @@ public class TestGeneratorValidation {
 			callExpr = callExpr.asAssignExpr().getValue();
 		}
 		if (!callExpr.isMethodCallExpr() && !callExpr.isObjectCreationExpr()) {
-			throw new RuntimeException("This type of target call is not handled yet: " + callExpr);
+			// Manage case in which the return type is explicitly casted
+			if (callExpr.isCastExpr()) {
+				callExpr = callExpr.asCastExpr().getExpression();
+			}
+			if (!callExpr.isMethodCallExpr() && !callExpr.isObjectCreationExpr()) {
+				throw new RuntimeException("This type of target call is not handled yet: " + callExpr);
+			}
 		}
 		if (callExpr.isMethodCallExpr() && callExpr.asMethodCallExpr().getScope().isPresent()) {
 			ret = ret.replace("receiverObjectID", callExpr.asMethodCallExpr().getScope().get().toString());
@@ -970,10 +1027,8 @@ public class TestGeneratorValidation {
 		for (URL cp : configuration.classDirs) {
 			classpathTarget += ":" + cp.getPath();
 		}
-		retVal.add("/usr/lib/jvm/java-8-openjdk-amd64/jre/bin/java");
+		retVal.add(configuration.getJava8path());
 		retVal.add("-Xmx16G");
-		// enabled assertions since evosuite is generating failing test cases for them
-		// retVal.add("-ea");
 		retVal.add("-jar");
 		retVal.add(configuration.getEvoSuiteJar());
 		retVal.add("-class");
@@ -989,7 +1044,8 @@ public class TestGeneratorValidation {
 		retVal.add("-Dvirtual_fs=false");
 		retVal.add("-Dcriterion=LINE:BRANCH:EXCEPTION:WEAKMUTATION:OUTPUT:METHOD:METHODNOEXCEPTION:CBRANCH");
 		// retVal.add("-Dno_runtime_dependency");
-
+		// enabled assertions since evosuite is generating failing test cases for them
+		// retVal.add("-ea");
 		return retVal;
 	}
 
