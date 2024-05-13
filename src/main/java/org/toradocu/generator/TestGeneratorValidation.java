@@ -318,6 +318,10 @@ public class TestGeneratorValidation {
 					StaticJavaParser.parseExpression("0"), Keyword.PUBLIC, Keyword.STATIC);
 			clax.addFieldWithInitializer(PrimitiveType.intType(), "passedConds", StaticJavaParser.parseExpression("0"),
 					Keyword.PUBLIC, Keyword.STATIC);
+			clax.addFieldWithInitializer(PrimitiveType.intType(), "inconclusivePass", StaticJavaParser.parseExpression("0"),
+					Keyword.PUBLIC, Keyword.STATIC);
+			clax.addFieldWithInitializer(PrimitiveType.intType(), "inconclusiveFail", StaticJavaParser.parseExpression("0"),
+					Keyword.PUBLIC, Keyword.STATIC);
 
 			// Add contracts method
 			MethodDeclaration mdContracts = clax.addMethod("contracts", Modifier.Keyword.PUBLIC,
@@ -391,7 +395,7 @@ public class TestGeneratorValidation {
 			mdInit.addAnnotation(new MarkerAnnotationExpr("org.junit.AfterClass"));
 			BlockStmt bs2 = mdInit.createBody();
 			bs2.addStatement("lta.test.utils.TestUtils.report(globalGuardsIds_lta, \"" + targetClass
-					+ "\", contracts(), satisfiedPreconds, violatedPreconds, passedConds, failedConds);");
+					+ "\", contracts(), satisfiedPreconds, violatedPreconds, passedConds, failedConds, inconclusivePass, inconclusiveFail);");
 
 			// write out the enriched test case
 			try (FileOutputStream output = new FileOutputStream(currentTestCase)) {
@@ -452,9 +456,9 @@ public class TestGeneratorValidation {
 						IfStmt ifstmt = new IfStmt();
 						ifstmt.setCondition(StaticJavaParser.parseExpression("!pass.isEmpty()"));
 						ifstmt.setThenStmt(StaticJavaParser.parseBlock(
-								"{for(String p : pass) {globalGuardsIds_lta.put(p, \"pass\");passedConds++;}}"));
+								"{if (pass.size() == 1) {for (String p : pass) {globalGuardsIds_lta.put(p, \"pass\");passedConds++;}} else {for (String p : pass) {if(!globalGuardsIds_lta.get(p).equals(\"pass\") && !globalGuardsIds_lta.get(p).equals(\"inconclusive_fail\") ) {globalGuardsIds_lta.put(p, \"inconclusive_pass\");inconclusivePass++;}}}}"));
 						ifstmt.setElseStmt(StaticJavaParser.parseBlock(
-								"{for(String f : fail) {globalGuardsIds_lta.put(f, \"fail\");failedConds++;}if (raisedEx !=  null) {throw raisedEx;}}"));
+								"{if (fail.size() == 1) {for (String f : fail) {globalGuardsIds_lta.put(f, \"fail\");failedConds++;}} else {for (String f : fail) {if(!globalGuardsIds_lta.get(f).equals(\"pass\")) {globalGuardsIds_lta.put(f, \"inconclusive_fail\");inconclusiveFail++;}}}if (raisedEx !=  null) {throw raisedEx;}}"));
 						catchBody.addStatement(ifstmt);
 					}
 				}
