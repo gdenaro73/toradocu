@@ -293,7 +293,8 @@ public class TestGenerator {
 					}
 				}
 
-				// The perspective test shall not hit any throws-spec (but the current one, if
+				// Only for test cases that aim to failure detection (i.e. guards -> not(post cond)),
+				// the perspective test shall not hit any throws-spec (but the current one, if
 				// the current one is a throws-spec)
 				for (ThrowsSpecification thowsSpec : specification.getThrowsSpecifications()) {
 					if (thowsSpec == spec) {
@@ -338,7 +339,8 @@ public class TestGenerator {
 				final String testName = testBaseName + (unmodeled ? "_unmodeled" : "") + "_Test";
 
 				evaluators.addItem(evaluatorQualifiedName, testName, method, spec, true);
-				createEvaluator(method, guards.toArray(new String[0]), excludingGuards.toArray(new String[0]), new String[]{postCond}, 
+				// This evaluator aims to a test case that hit the contract, thus we do not use the "excludingGuards" here 
+				createEvaluator(method, guards.toArray(new String[0]), new String[0], new String[]{postCond}, 
 						spec instanceof ThrowsSpecification, false, evaluatorName, evaluatorsDir, classpathTarget);
 				TestGeneratorSummaryData._I().incGeneratedPositiveEvaluators();
 
@@ -350,6 +352,7 @@ public class TestGenerator {
 					final String testForViolationName = testBaseName + "_failure_Test";
 
 					evaluators.addItem(evaluatorForViolationQualifiedName, testForViolationName, method, spec, false);
+					// This evaluator aims to a test case that hit the contract, thus we DO USE the "excludingGuards" here 
 					createEvaluator(method, guards.toArray(new String[0]), excludingGuards.toArray(new String[0]), new String[]{postCond},
 							spec instanceof ThrowsSpecification, true, evaluatorForViolationName, evaluatorsDir, classpathTarget);
 					TestGeneratorSummaryData._I().incGeneratedNegativeEvaluators();
