@@ -1,5 +1,5 @@
 export JAVA_HOME="/usr/lib/jvm/java-8-openjdk-amd64/jre" 
-export JAVA_OPTIONS="-Xmx2g"
+#export JAVA_OPTIONS="-Xmx2g"
 
 # This script executes the test cases that correspond to the experiments.
 

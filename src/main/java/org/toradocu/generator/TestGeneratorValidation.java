@@ -1032,20 +1032,20 @@ public class TestGeneratorValidation {
 			classpathTarget += ":" + cp.getPath();
 		}
 		retVal.add(configuration.getJava8path());
-		retVal.add("-Xmx16G");
+		//retVal.add("-Xmx16G");
 		retVal.add("-jar");
 		retVal.add(configuration.getEvoSuiteJar());
 		retVal.add("-class");
 		retVal.add(targetClass);
 		retVal.add("-mem");
-		retVal.add("16384");
+		retVal.add("4096");
 		retVal.add("-DCP=" + classpathTarget);
 		retVal.add("-Dassertions=false");
 		// retVal.add("-Dsearch_budget=" + configuration.getEvoSuiteBudget());
 		retVal.add("-Dsearch_budget=" + evosuiteBudget);
 		retVal.add("-Dreport_dir=" + outputDir);
 		retVal.add("-Dtest_dir=" + outputDir);
-		retVal.add("-Dvirtual_fs=false");
+		retVal.add("-Dvirtual_fs=true");
 		retVal.add("-Dcriterion=LINE:BRANCH:EXCEPTION:WEAKMUTATION:OUTPUT:METHOD:METHODNOEXCEPTION:CBRANCH");
 		// retVal.add("-Dno_runtime_dependency");
 		// enabled assertions since evosuite is generating failing test cases for them

@@ -82,7 +82,7 @@ public class TestgenTest {
 						"--evosuite-jar",
 						evosuiteJar,
 						"--evosuite-budget",
-						"30",
+						"35",
 						"--test-generation",
 						"true",
 						"--validate-tests",

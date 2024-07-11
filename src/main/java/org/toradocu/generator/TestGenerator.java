@@ -947,13 +947,13 @@ public class TestGenerator {
 			classpathTarget += ":" + cp.getPath();
 		}
 		retVal.add(configuration.getJava8path());
-		retVal.add("-Xmx16G"); //4G
+		//retVal.add("-Xmx16G"); //4G
 		retVal.add("-jar");
 		retVal.add(configuration.getEvoSuiteJar());
 		retVal.add("-class");
 		retVal.add(targetClass);
 		retVal.add("-mem");
-		retVal.add("16384"); //2048
+		retVal.add("4096"); //16384
 		retVal.add("-DCP=" + classpathTarget);
 		retVal.add("-Dassertions=false");
 		// retVal.add("-Dglobal_timeout=" + configuration.getEvoSuiteBudget());
@@ -961,7 +961,7 @@ public class TestGenerator {
 		retVal.add("-Dsearch_budget=" + evosuiteBudget);
 		retVal.add("-Dreport_dir=" + outputDir);
 		retVal.add("-Dtest_dir=" + testsDir);
-		retVal.add("-Dvirtual_fs=false");
+		retVal.add("-Dvirtual_fs=true"); //-Dvirtual_fs=false
 		retVal.add("-Dselection_function=ROULETTEWHEEL");
 		retVal.add("-Dcriterion=PATHCONDITION");
 		//retVal.add("-Dcriterion=PATHCONDITION:BRANCH:EXCEPTION:METHOD:METHODNOEXCEPTION:CBRANCH");
