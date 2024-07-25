@@ -962,7 +962,7 @@ public class TestGenerator {
 		retVal.add("-Dreport_dir=" + outputDir);
 		retVal.add("-Dtest_dir=" + testsDir);
 		retVal.add("-Dvirtual_fs=true"); //-Dvirtual_fs=false
-		retVal.add("-Dselection_function=ROULETTEWHEEL");
+		//retVal.add("-Dselection_function=ROULETTEWHEEL"); // non-standard
 		retVal.add("-Dcriterion=PATHCONDITION");
 		//retVal.add("-Dcriterion=PATHCONDITION:BRANCH:EXCEPTION:METHOD:METHODNOEXCEPTION:CBRANCH");
 		retVal.add("-Demit_tests_for_criterion=PATHCONDITION");
@@ -970,14 +970,14 @@ public class TestGenerator {
 		retVal.add("-Dpost_condition_check=true");
 		retVal.add("-Dsushi_statistics=true");
 		retVal.add("-Dinline=true");
-		retVal.add("-Dsushi_modifiers_local_search=true");
+		//retVal.add("-Dsushi_modifiers_local_search=true"); // non-standard
 		retVal.add("-Duse_minimizer_during_crossover=false");
-		retVal.add("-Davoid_replicas_of_individuals=true");
-		retVal.add("-Dno_change_iterations_before_reset=30");
+		//retVal.add("-Davoid_replicas_of_individuals=true"); // non-standard
+		//retVal.add("-Dno_change_iterations_before_reset=30"); // non-standard
 		// retVal.add("-Dno_runtime_dependency");
 		retVal.add("-Dpath_condition_evaluators_dir=" + outputDir);
 		retVal.add("-Demit_tests_incrementally=true");
-		retVal.add("-Dcrossover_function=SUSHI_HYBRID");
+		//retVal.add("-Dcrossover_function=SUSHI_HYBRID"); // non-standard
 		retVal.add("-Dalgorithm=DYNAMOSA");
 		retVal.add("-generateMOSuite");
 		retVal.add("-Dpath_condition=" + evaluatorDefsForEvoSuite);

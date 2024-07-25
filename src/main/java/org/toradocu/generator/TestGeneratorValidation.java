@@ -318,10 +318,20 @@ public class TestGeneratorValidation {
 					StaticJavaParser.parseExpression("0"), Keyword.PUBLIC, Keyword.STATIC);
 			clax.addFieldWithInitializer(PrimitiveType.intType(), "passedConds", StaticJavaParser.parseExpression("0"),
 					Keyword.PUBLIC, Keyword.STATIC);
-			clax.addFieldWithInitializer(PrimitiveType.intType(), "inconclusivePass", StaticJavaParser.parseExpression("0"),
-					Keyword.PUBLIC, Keyword.STATIC);
-			clax.addFieldWithInitializer(PrimitiveType.intType(), "inconclusiveFail", StaticJavaParser.parseExpression("0"),
-					Keyword.PUBLIC, Keyword.STATIC);
+			clax.addFieldWithInitializer(PrimitiveType.intType(), "inconclusivePass",
+					StaticJavaParser.parseExpression("0"), Keyword.PUBLIC, Keyword.STATIC);
+			clax.addFieldWithInitializer(PrimitiveType.intType(), "inconclusiveFail",
+					StaticJavaParser.parseExpression("0"), Keyword.PUBLIC, Keyword.STATIC);
+
+			// Create and initialize fields for counting covered contracts per method
+			clax.addFieldWithInitializer(PrimitiveType.intType(), "coveredContracts",
+					StaticJavaParser.parseExpression("0"), Keyword.PUBLIC, Keyword.STATIC);
+			ClassOrInterfaceType coveredContractsPerMethodType = StaticJavaParser
+					.parseClassOrInterfaceType("java.util.ArrayList<Integer>");
+			Expression coveredContractsPerMethodInit = StaticJavaParser
+					.parseExpression("new java.util.ArrayList<Integer>()");
+			clax.addFieldWithInitializer(coveredContractsPerMethodType, "coveredContractsPerMethod",
+					coveredContractsPerMethodInit, Keyword.PUBLIC, Keyword.STATIC);
 
 			// Add contracts method
 			MethodDeclaration mdContracts = clax.addMethod("contracts", Modifier.Keyword.PUBLIC,
@@ -353,7 +363,6 @@ public class TestGeneratorValidation {
 			mdInit.setType(new com.github.javaparser.ast.type.VoidType());
 			mdInit.addAnnotation(new MarkerAnnotationExpr("org.junit.BeforeClass"));
 			BlockStmt bs = mdInit.createBody();
-
 			int identifier = 0;
 			int specificationCounter = 0;
 			for (DocumentedExecutable targetMethod : allSpecs.keySet()) {
@@ -395,7 +404,21 @@ public class TestGeneratorValidation {
 			mdInit.addAnnotation(new MarkerAnnotationExpr("org.junit.AfterClass"));
 			BlockStmt bs2 = mdInit.createBody();
 			bs2.addStatement("lta.test.utils.TestUtils.report(globalGuardsIds_lta, \"" + targetClass
-					+ "\", contracts(), satisfiedPreconds, violatedPreconds, passedConds, failedConds, inconclusivePass, inconclusiveFail);");
+					+ "\", contracts(), satisfiedPreconds, violatedPreconds, passedConds, failedConds, inconclusivePass, inconclusiveFail, coveredContractsPerMethod);");
+
+			// Add Before
+			mdInit = clax.addMethod("before", Modifier.Keyword.PUBLIC);
+			mdInit.setType(new com.github.javaparser.ast.type.VoidType());
+			mdInit.addAnnotation(new MarkerAnnotationExpr("org.junit.Before"));
+			BlockStmt bsBefore = mdInit.createBody();
+			bsBefore.addStatement("coveredContracts = 0;");
+
+			// Add After
+			mdInit = clax.addMethod("after", Modifier.Keyword.PUBLIC);
+			mdInit.setType(new com.github.javaparser.ast.type.VoidType());
+			mdInit.addAnnotation(new MarkerAnnotationExpr("org.junit.After"));
+			BlockStmt bsAfter = mdInit.createBody();
+			bsAfter.addStatement("coveredContractsPerMethod.add(coveredContracts);");
 
 			// write out the enriched test case
 			try (FileOutputStream output = new FileOutputStream(currentTestCase)) {
@@ -625,12 +648,17 @@ public class TestGeneratorValidation {
 			Expression clauseExp = StaticJavaParser.parseExpression(clause);
 			IfStmt i = new IfStmt();
 			i.setCondition(clauseExp);
+
+			BlockStmt bs = new BlockStmt();
+
 			MethodCallExpr mce = new MethodCallExpr();
 			mce.setScope(StaticJavaParser.parseExpression("uniqueGuardIds_lta"));
 			mce.setName("add");
 			mce.addArgument(new StringLiteralExpr(Integer.toString(identifier)));
-			BlockStmt bs = new BlockStmt();
 			bs.addStatement(mce);
+
+			bs.addStatement(StaticJavaParser.parseStatement("coveredContracts++;"));
+
 			i.setThenStmt(bs);
 			i.setLineComment(guardsComment);
 
@@ -1032,7 +1060,7 @@ public class TestGeneratorValidation {
 			classpathTarget += ":" + cp.getPath();
 		}
 		retVal.add(configuration.getJava8path());
-		//retVal.add("-Xmx16G");
+		// retVal.add("-Xmx16G");
 		retVal.add("-jar");
 		retVal.add(configuration.getEvoSuiteJar());
 		retVal.add("-class");
