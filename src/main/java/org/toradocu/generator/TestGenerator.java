@@ -74,8 +74,8 @@ import randoop.condition.specification.ThrowsSpecification;
  */
 public class TestGenerator {
 	public static final int MAX_EVALUATORS_PER_EVOSUITE_CALL = 10;
-	public static final String EVALUATORS_FOLDER = "evaluators";
-	public static final String TESTCASES_FOLDER = "testcases";
+	public static final String EVALUATORS_FOLDER = "";
+	public static final String TESTCASES_FOLDER = "";
 	private static final String EVALUATOR_TEMPLATE_NAME = "EvoSuiteEvaluator_Template";
 	private static final JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
 
@@ -235,7 +235,7 @@ public class TestGenerator {
 		}
 
 		// Create output directory where evaluators are saved.
-		final Path evaluatorsDir = Paths.get(configuration.getTestOutputDir()).resolve(EVALUATORS_FOLDER);
+		final Path evaluatorsDir = Paths.get(configuration.getEvaluatorsOutputDir()).resolve(EVALUATORS_FOLDER);
 		final boolean evaluatorsDirCreationSucceeded = createOutputDir(evaluatorsDir.toString(), true);
 		if (!evaluatorsDirCreationSucceeded) {
 			log.error("Test generation failed, cannot create dir:" + evaluatorsDir);
@@ -581,6 +581,21 @@ public class TestGenerator {
 			log.error("Test case not found while trying to parse it.", e);
 		}
 
+		// Create test case without oracle instrumentation
+		/*
+		String tcPath = currentTestCase.toString();
+		String tcPathNew = tcPath.substring(0,tcPath.lastIndexOf(".java"))+"_no_oracle.java";
+		Optional<ClassOrInterfaceDeclaration> clax = cu.findFirst(ClassOrInterfaceDeclaration.class, c->true);
+		String originalClaxName = clax.get().getNameAsString();
+		clax.get().setName(originalClaxName+"_no_oracle");
+		try (FileOutputStream output = new FileOutputStream(tcPathNew)) {
+			output.write(cu.toString().getBytes());
+		} catch (IOException e) {
+			log.error("Error while duplicating original test case to file: " + currentTestCase, e);
+		}
+		clax.get().setName(originalClaxName);
+		*/
+		
 		// In any case: throw an exception if a failure-driven test case completed
 		// without pinpointing any failure.
 		if (testName.endsWith("failure_Test")) {
@@ -719,7 +734,7 @@ public class TestGenerator {
 						"Spec of unexpected type " + spec.getClass().getName() + ": " + spec.getDescription());
 			}
 		}
-
+				
 		// write out the enriched test case
 		try (FileOutputStream output = new FileOutputStream(currentTestCase)) {
 			output.write(cu.toString().getBytes());
@@ -1033,7 +1048,7 @@ public class TestGenerator {
 		Checks.nonNullParameter(guards, "guardStrings");
 		Checks.nonNullParameter(evaluatorName, "evaluatorName");
 
-		final InputStream evaluatorTemplate = ClassLoader.getSystemResourceAsStream(EVALUATOR_TEMPLATE_NAME + ".java");
+		final InputStream evaluatorTemplate = ClassLoader.getSystemResourceAsStream(EVALUATOR_TEMPLATE_NAME + ".template");
 		CompilationUnit cu = StaticJavaParser.parse(evaluatorTemplate);
 
 		// Set the correct package for the newly created evaluator

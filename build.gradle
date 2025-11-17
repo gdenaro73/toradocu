@@ -415,7 +415,7 @@ build.dependsOn verifyGoogleJavaFormat
 googleJavaFormat {
   exclude 'out'
   exclude 'src/test/resources'
-  exclude 'src/main/resources/AspectTemplate.java'
+  exclude 'src/main/resources/AspectTemplate.template'
 }
 
 shadowJar {

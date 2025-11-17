@@ -96,10 +96,13 @@ public enum Configuration {
 	private boolean testGeneration = false;
 
 	@Parameter(names = "--java8path", description = "The system path to execute java8 jvm, needed to run evosuite for test generation", arity = 1)
-	private String java8path = "/Library/Java/JavaVirtualMachines/jdk1.8.0_131.jdk/Contents/Home/bin/java";
+	private String java8path = "/opt/java/jdk1.8.0_202/bin/java";
 
 	@Parameter(names = "--test-output-dir", description = "Specifies a directory where Toradocu will store the generated test cases")
 	private String testOutputDir = "tests";
+	
+	@Parameter(names = "--evaluators-output-dir", description = "Specifies a directory where Toradocu will store the generated evaluators")
+	private String evaluatorsOutputDir = "evaluators";
 
 	@Parameter(names = "--evosuite-jar", description = "Specifies the path to the jar of EvoSuite")
 	private String evosuiteJar = "evosuite-shaded-1.2.1-SNAPSHOT.jar";
@@ -128,10 +131,10 @@ public enum Configuration {
 	private boolean validationTestsBackupGeneration = true;
 
 	/** File used as template for generated aspects. */
-	private static final String ASPECT_TEMPLATE = "AspectTemplate.java";
+	private static final String ASPECT_TEMPLATE = "AspectTemplate.template";
 
 	/** Aspect to instrument JUnit test cases. */
-	private static final String JUNIT_TC_ASPECT = "TestCaseAspect.java";
+	private static final String JUNIT_TC_ASPECT = "TestCaseAspect.template";
 
 	/**
 	 * Initializes the configuration based on the given command-line options. This
@@ -320,6 +323,17 @@ public enum Configuration {
 	 */
 	public String getTestOutputDir() {
 		return testOutputDir;
+	}
+	
+	/**
+	 * Returns the path to the directory in which generated evaluators should be
+	 * output.
+	 *
+	 * @return the path to the directory in which generated evaluators should be
+	 *         output
+	 */
+	public String getEvaluatorsOutputDir() {
+		return evaluatorsOutputDir;
 	}
 
 	/**
