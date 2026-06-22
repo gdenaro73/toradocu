@@ -1,16 +1,23 @@
 package org.toradocu;
 
+import static java.util.stream.Collectors.toList;
 import static org.toradocu.translator.CommentTranslator.processCondition;
 
 import com.beust.jcommander.JCommander;
 import com.beust.jcommander.ParameterException;
+import com.google.gson.JsonIOException;
+import com.google.gson.JsonSyntaxException;
+import com.google.gson.reflect.TypeToken;
+
 import java.io.*;
+import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -18,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.impl.SimpleLogger;
 import org.toradocu.conf.Configuration;
 import org.toradocu.extractor.DocumentedExecutable;
+import org.toradocu.extractor.DocumentedParameter;
 import org.toradocu.extractor.DocumentedType;
 import org.toradocu.extractor.JavadocExtractor;
 import org.toradocu.extractor.ParameterNotFoundException;
@@ -26,9 +34,14 @@ import org.toradocu.generator.TestGenerator;
 import org.toradocu.generator.TestGeneratorValidation;
 import org.toradocu.output.util.JsonOutput;
 import org.toradocu.translator.CommentTranslator;
+import org.toradocu.translator.llm.CommentTranslatorLLM;
+import org.toradocu.translator.llm.MethodsSpecification;
+import org.toradocu.translator.llm.MethodsSpecification.MethodDetails;
 import org.toradocu.translator.semantic.SemanticMatcher;
 import org.toradocu.util.GsonInstance;
 import randoop.condition.specification.Guard;
+import randoop.condition.specification.Identifiers;
+import randoop.condition.specification.Operation;
 import randoop.condition.specification.OperationSpecification;
 import randoop.condition.specification.PostSpecification;
 import randoop.condition.specification.PreSpecification;
@@ -87,33 +100,33 @@ public class Toradocu {
 
 		List<DocumentedExecutable> members = null;
 		final String targetClass = configuration.getTargetClass();
-		if (configuration.getConditionTranslatorInput() == null) {
-			final JavadocExtractor javadocExtractor = new JavadocExtractor();
-			try {
-				final DocumentedType documentedType = javadocExtractor.extract(targetClass,
-						configuration.sourceDir.toString());
-				members = documentedType.getDocumentedExecutables();
-			} catch (ParameterNotFoundException e) {
-				log.error(e.getMessage() + "\n" + Arrays.toString(e.getStackTrace()));
-				System.exit(1);
-			} catch (ClassNotFoundException e) {
-				log.error( // TODO Refine this error message for the specific caught exception.
-						e.getMessage() + "\nPossible reasons for the error are:"
-								+ "\n1. The Javadoc documentations is wrong"
-								+ "\n2. The path to the source code of your system is wrong: " + configuration.sourceDir
-								+ "\n3. The path to the binaries of your system is wrong: " + configuration.classDirs
-								+ "\nPlease, check the correctness of the command line arguments."
-								+ "\nIf the error persists, report the issue at "
-								+ "https://github.com/albertogoffi/toradocu/issues" + "\nError stack trace:\n"
-								+ Arrays.toString(e.getStackTrace()));
-				System.exit(1);
-			} catch (FileNotFoundException e) {
-				e.printStackTrace(); // TODO Print a more meaningful message!
-				System.exit(1);
-			}
+
+		final JavadocExtractor javadocExtractor = new JavadocExtractor();
+		try {
+			final DocumentedType documentedType = javadocExtractor.extract(targetClass,
+					configuration.sourceDir.toString());
+			members = documentedType.getDocumentedExecutables();
+		} catch (ParameterNotFoundException e) {
+			log.error(e.getMessage() + "\n" + Arrays.toString(e.getStackTrace()));
+			System.exit(1);
+		} catch (ClassNotFoundException e) {
+			log.error( // TODO Refine this error message for the specific caught exception.
+					e.getMessage() + "\nPossible reasons for the error are:"
+							+ "\n1. The Javadoc documentations is wrong"
+							+ "\n2. The path to the source code of your system is wrong: " + configuration.sourceDir
+							+ "\n3. The path to the binaries of your system is wrong: " + configuration.classDirs
+							+ "\nPlease, check the correctness of the command line arguments."
+							+ "\nIf the error persists, report the issue at "
+							+ "https://github.com/albertogoffi/toradocu/issues" + "\nError stack trace:\n"
+							+ Arrays.toString(e.getStackTrace()));
+			System.exit(1);
+		} catch (FileNotFoundException e) {
+			e.printStackTrace(); // TODO Print a more meaningful message!
+			System.exit(1);
 		}
 
-		if (configuration.getJavadocExtractorOutput() != null) { // Print collection to the output file.
+		if (configuration.getJavadocExtractorOutput() != null) {
+			// Print collection to the output file.
 			try (BufferedWriter writer = Files.newBufferedWriter(configuration.getJavadocExtractorOutput().toPath(),
 					StandardCharsets.UTF_8)) {
 				writer.write(GsonInstance.gson().toJson(members));
@@ -127,107 +140,102 @@ public class Toradocu {
 		}
 
 		// === Condition Translator ===
+		/*
+		 * // Enable or disable semantic matching
+		 * SemanticMatcher.setEnabled(configuration.isSemanticMatcherEnabled());
+		 * 
+		 * if (configuration.isConditionTranslationEnabled()) {
+		 * Map<DocumentedExecutable, OperationSpecification> specifications;
+		 * 
+		 * // Use @tComment or the standard condition translator to translate comments.
+		 * if (configuration.useTComment()) { specifications = null;//
+		 * tcomment.TcommentKt.translate(members); } else { specifications =
+		 * CommentTranslator.createSpecifications(members); }
+		 * 
+		 * // Output the result on a file or on the standard output, if silent mode is
+		 * // disabled. List<JsonOutput> jsonOutputs = new ArrayList<>(); if
+		 * (!configuration.isSilent() || !specifications.isEmpty()) { if
+		 * (configuration.getConditionTranslatorOutput() != null) { try (BufferedWriter
+		 * writer = Files.newBufferedWriter(
+		 * configuration.getConditionTranslatorOutput().toPath(),
+		 * StandardCharsets.UTF_8)) {
+		 * 
+		 * for (DocumentedExecutable executable : specifications.keySet()) {
+		 * jsonOutputs.add(new JsonOutput(executable, specifications.get(executable)));
+		 * } String jsonOutput = GsonInstance.gson().toJson(jsonOutputs);
+		 * writer.write(jsonOutput); } catch (Exception e) {
+		 * log.error("Unable to write the output on file " +
+		 * configuration.getConditionTranslatorOutput().getAbsolutePath(), e); } } else
+		 * { for (DocumentedExecutable member : members) { jsonOutputs.add(new
+		 * JsonOutput(member, specifications.get(member))); } String jsonOutput =
+		 * GsonInstance.gson().toJson(jsonOutputs);
+		 * System.out.println("Condition translator output:\n" + jsonOutput); } }
+		 */
 
-		// Enable or disable semantic matching
-		SemanticMatcher.setEnabled(configuration.isSemanticMatcherEnabled());
-
-		if (configuration.isConditionTranslationEnabled()) {
-			Map<DocumentedExecutable, OperationSpecification> specifications;
-
-			// Use @tComment or the standard condition translator to translate comments.
-			if (configuration.useTComment()) {
-				specifications = null;// tcomment.TcommentKt.translate(members);
-			} else {
-				specifications = CommentTranslator.createSpecifications(members);
+		Type listType = new TypeToken<List<MethodsSpecification>>() {}.getType();
+		List<MethodsSpecification> data = null;
+		try {
+			data = GsonInstance.gson().fromJson(new FileReader(configuration.getjsonSpecificationsPath()), listType);
+		} catch (JsonIOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (JsonSyntaxException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (FileNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		List<MethodDetails> methodsSpecs = null;
+		for(MethodsSpecification classData:data) {
+			if(classData.getClassName().equals(configuration.getTargetClass())) {
+				methodsSpecs = classData.getMethods();
 			}
+		}
 
-			// Output the result on a file or on the standard output, if silent mode is
-			// disabled.
-			List<JsonOutput> jsonOutputs = new ArrayList<>();
-			if (!configuration.isSilent() || !specifications.isEmpty()) {
-				if (configuration.getConditionTranslatorOutput() != null) {
-					try (BufferedWriter writer = Files.newBufferedWriter(
-							configuration.getConditionTranslatorOutput().toPath(), StandardCharsets.UTF_8)) {
+		Map<DocumentedExecutable, OperationSpecification> specifications = CommentTranslatorLLM
+				.createSpecifications(members, methodsSpecs);
 
-						for (DocumentedExecutable executable : specifications.keySet()) {
-							jsonOutputs.add(new JsonOutput(executable, specifications.get(executable)));
-						}
-						String jsonOutput = GsonInstance.gson().toJson(jsonOutputs);
-						writer.write(jsonOutput);
-					} catch (Exception e) {
-						log.error("Unable to write the output on file "
-								+ configuration.getConditionTranslatorOutput().getAbsolutePath(), e);
-					}
-				} else {
-					for (DocumentedExecutable member : members) {
-						jsonOutputs.add(new JsonOutput(member, specifications.get(member)));
-					}
-					String jsonOutput = GsonInstance.gson().toJson(jsonOutputs);
-					System.out.println("Condition translator output:\n" + jsonOutput);
-				}
+		// === Test Generator ===
+		// Note that test generation is enabled only when translation is enabled.
+		if (configuration.isTestGenerationEnabled()) {
+			log.info("** Starting test generation...");
+			try {
+				TestGenerator.createTests(specifications);
+				log.info("** Test generation completed");
+			} catch (Throwable e) {
+				e.printStackTrace();
+				log.error("Error during test creation.", e);
 			}
+		} else {
+			log.info("Test generator disabled: test generation skipped.");
+		}
 
-			// Create statistics.
-			/*
-			 * File expectedResultFile = configuration.getExpectedOutput(); if
-			 * (expectedResultFile != null) { Type collectionType = new
-			 * TypeToken<List<JsonOutput>>() {}.getType(); try (BufferedReader reader =
-			 * Files.newBufferedReader(expectedResultFile.toPath()); BufferedWriter
-			 * resultsFile = Files.newBufferedWriter( configuration.getStatsFile().toPath(),
-			 * StandardOpenOption.CREATE, StandardOpenOption.APPEND)) { List<JsonOutput>
-			 * expectedResult = GsonInstance.gson().fromJson(reader, collectionType);
-			 * List<Stats> targetClassResults = Stats.getStats(jsonOutputs, expectedResult);
-			 * for (Stats result : targetClassResults) { if (result.numberOfConditions() !=
-			 * 0) { // Ignore methods with no tags. resultsFile.write(result.asCSV());
-			 * resultsFile.newLine(); } } } catch (IOException e) {
-			 * log.error("Unable to read the file: " +
-			 * configuration.getConditionTranslatorInput(), e); } }
-			 */
-
-			// Export generated specifications as Randoop specifications if requested.
-			generateRandoopSpecs(specifications);
-
-			// === Test Generator ===
-			// Note that test generation is enabled only when translation is enabled.
-			if (configuration.isTestGenerationEnabled()) {
-				log.info("** Starting test generation...");
-				try {
-					TestGenerator.createTests(specifications);
-					log.info("** Test generation completed");
-				} catch (Throwable e) {
-					e.printStackTrace();
-					log.error("Error during test creation.", e);
-				}
-			} else {
-				log.info("Test generator disabled: test generation skipped.");
+		// === Validation Test Generator ===
+		if (configuration.isTestValidationEnabled()) {
+			log.info("** Starting test generation for validation...");
+			try {
+				TestGeneratorValidation.createTests(specifications);
+				log.info("** Test generation for validation completed");
+			} catch (Throwable e) {
+				e.printStackTrace();
+				log.error("Error during validation test creation.", e);
 			}
+		} else {
+			log.info("Validation test generator disabled: validation test generation skipped.");
+		}
 
-			// === Validation Test Generator ===
-			if (configuration.isTestValidationEnabled()) {
-				log.info("** Starting test generation for validation...");
-				try {
-					TestGeneratorValidation.createTests(specifications);
-					log.info("** Test generation for validation completed");
-				} catch (Throwable e) {
-					e.printStackTrace();
-					log.error("Error during validation test creation.", e);
-				}
-			} else {
-				log.info("Validation test generator disabled: validation test generation skipped.");
+		// === Oracle Generator ===
+		// Note that aspect generation is enabled only when translation is enabled.
+		if (configuration.isOracleGenerationEnabled() && false) {
+			try {
+				OracleGenerator.createAspects(specifications);
+			} catch (IOException e) {
+				e.printStackTrace();
+				log.error("Error during aspects creation.", e);
 			}
-
-			// === Oracle Generator ===
-			// Note that aspect generation is enabled only when translation is enabled.
-			if (configuration.isOracleGenerationEnabled()) {
-				try {
-					OracleGenerator.createAspects(specifications);
-				} catch (IOException e) {
-					e.printStackTrace();
-					log.error("Error during aspects creation.", e);
-				}
-			} else {
-				log.info("Oracle generator disabled: aspect generation skipped.");
-			}
+		} else {
+			log.info("Oracle generator disabled: aspect generation skipped.");
 		}
 	}
 

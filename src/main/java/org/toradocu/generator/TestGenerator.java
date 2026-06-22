@@ -273,7 +273,7 @@ public class TestGenerator {
 			for (Specification spec : targetSpecs) {
 				ArrayList<String> guards = new ArrayList<>();
 				ArrayList<String> excludingGuards = new ArrayList<>();
-				
+
 				// The perspective test shall satisfy the precondition of the focal spec
 				boolean specGuardEmpty = false;
 				boolean unmodeledGuard = false;
@@ -293,7 +293,8 @@ public class TestGenerator {
 					}
 				}
 
-				// Only for test cases that aim to failure detection (i.e. guards -> not(post cond)),
+				// Only for test cases that aim to failure detection (i.e. guards -> not(post
+				// cond)),
 				// the perspective test shall not hit any throws-spec (but the current one, if
 				// the current one is a throws-spec)
 				for (ThrowsSpecification thowsSpec : specification.getThrowsSpecifications()) {
@@ -303,8 +304,10 @@ public class TestGenerator {
 					String throwsGuard = thowsSpec.getGuard().getConditionText();
 					if (throwsGuard != null && !throwsGuard.isEmpty()) {
 						excludingGuards.add(throwsGuard);
-						/*String precondStr = "!(" + throwsGuard + ")"; // negate the guard of the throws spec
-						guards.add(precondStr);*/
+						/*
+						 * String precondStr = "!(" + throwsGuard + ")"; // negate the guard of the
+						 * throws spec guards.add(precondStr);
+						 */
 					}
 				}
 
@@ -338,37 +341,46 @@ public class TestGenerator {
 				final String testBaseName = configuration.getTargetClass() + "_" + (evaluatorNumber + 1);
 				final String testName = testBaseName + (unmodeled ? "_unmodeled" : "") + "_Test";
 
-				evaluators.addItem(evaluatorQualifiedName, testName, method, spec, true);
-				// This evaluator aims to a test case that hit the contract, thus we do not use the "excludingGuards" here 
-				createEvaluator(method, guards.toArray(new String[0]), new String[0], new String[]{postCond}, 
-						spec instanceof ThrowsSpecification, false, evaluatorName, evaluatorsDir, classpathTarget);
-				TestGeneratorSummaryData._I().incGeneratedPositiveEvaluators();
+				// This evaluator aims to a test case that hit the contract, thus we do not use
+				// the "excludingGuards" here
+				int compilationResult = createEvaluator(method, guards.toArray(new String[0]), new String[0],
+						new String[] { postCond }, spec instanceof ThrowsSpecification, false, evaluatorName,
+						evaluatorsDir, classpathTarget);
+				if (compilationResult != 0) {
+					log.error("Compilation error for: " + evaluatorName);
+				} else {
+					evaluators.addItem(evaluatorQualifiedName, testName, method, spec, true);
+					TestGeneratorSummaryData._I().incGeneratedPositiveEvaluators();
 
-				if (!unmodeled) {
-					// ...an evaluator to search for a test case that violates the given
-					// postcondition
-					final String evaluatorForViolationName = evaluatorBaseName + "_failure";
-					final String evaluatorForViolationQualifiedName = evaluatorBaseQualifiedName + "_failure";
-					final String testForViolationName = testBaseName + "_failure_Test";
+					if (!unmodeled) {
+						// ...an evaluator to search for a test case that violates the given
+						// postcondition
+						final String evaluatorForViolationName = evaluatorBaseName + "_failure";
+						final String evaluatorForViolationQualifiedName = evaluatorBaseQualifiedName + "_failure";
+						final String testForViolationName = testBaseName + "_failure_Test";
 
-					evaluators.addItem(evaluatorForViolationQualifiedName, testForViolationName, method, spec, false);
-					// This evaluator aims to a test case that hit the contract, thus we DO USE the "excludingGuards" here 
-					createEvaluator(method, guards.toArray(new String[0]), excludingGuards.toArray(new String[0]), new String[]{postCond},
-							spec instanceof ThrowsSpecification, true, evaluatorForViolationName, evaluatorsDir, classpathTarget);
-					TestGeneratorSummaryData._I().incGeneratedNegativeEvaluators();
-					/*
-					 * RATIONALE: if postCond != empty - guardUnmodeled: possibly we may violate the
-					 * postcond out of the guard (which we cannot automatically check for) --> it
-					 * does not make much sense to generate tests for failures -->(and we must
-					 * manually set the assumption later on in the positive test). - guardModeled,
-					 * and given: basic case --> yes, we try to generate tests for failures -
-					 * guardModeled, but empty: the postcond is unguarded, --> it makes still sense
-					 * to generate tests for failures else, if postCond == empty --> it is
-					 * impossible to generate tests for failures -->(and we must manually set the
-					 * assertion later on in the positive test).
-					 */
+						evaluators.addItem(evaluatorForViolationQualifiedName, testForViolationName, method, spec,
+								false);
+						// This evaluator aims to a test case that hit the contract, thus we DO USE the
+						// "excludingGuards" here
+						createEvaluator(method, guards.toArray(new String[0]), excludingGuards.toArray(new String[0]),
+								new String[] { postCond }, spec instanceof ThrowsSpecification, true,
+								evaluatorForViolationName, evaluatorsDir, classpathTarget);
+						TestGeneratorSummaryData._I().incGeneratedNegativeEvaluators();
+						/*
+						 * RATIONALE: if postCond != empty - guardUnmodeled: possibly we may violate the
+						 * postcond out of the guard (which we cannot automatically check for) --> it
+						 * does not make much sense to generate tests for failures -->(and we must
+						 * manually set the assumption later on in the positive test). - guardModeled,
+						 * and given: basic case --> yes, we try to generate tests for failures -
+						 * guardModeled, but empty: the postcond is unguarded, --> it makes still sense
+						 * to generate tests for failures else, if postCond == empty --> it is
+						 * impossible to generate tests for failures -->(and we must manually set the
+						 * assertion later on in the positive test).
+						 */
+					}
+					evaluatorNumber += 1;
 				}
-				evaluatorNumber += 1;
 			}
 		}
 
@@ -583,19 +595,18 @@ public class TestGenerator {
 
 		// Create test case without oracle instrumentation
 		/*
-		String tcPath = currentTestCase.toString();
-		String tcPathNew = tcPath.substring(0,tcPath.lastIndexOf(".java"))+"_no_oracle.java";
-		Optional<ClassOrInterfaceDeclaration> clax = cu.findFirst(ClassOrInterfaceDeclaration.class, c->true);
-		String originalClaxName = clax.get().getNameAsString();
-		clax.get().setName(originalClaxName+"_no_oracle");
-		try (FileOutputStream output = new FileOutputStream(tcPathNew)) {
-			output.write(cu.toString().getBytes());
-		} catch (IOException e) {
-			log.error("Error while duplicating original test case to file: " + currentTestCase, e);
-		}
-		clax.get().setName(originalClaxName);
-		*/
-		
+		 * String tcPath = currentTestCase.toString(); String tcPathNew =
+		 * tcPath.substring(0,tcPath.lastIndexOf(".java"))+"_no_oracle.java";
+		 * Optional<ClassOrInterfaceDeclaration> clax =
+		 * cu.findFirst(ClassOrInterfaceDeclaration.class, c->true); String
+		 * originalClaxName = clax.get().getNameAsString();
+		 * clax.get().setName(originalClaxName+"_no_oracle"); try (FileOutputStream
+		 * output = new FileOutputStream(tcPathNew)) {
+		 * output.write(cu.toString().getBytes()); } catch (IOException e) {
+		 * log.error("Error while duplicating original test case to file: " +
+		 * currentTestCase, e); } clax.get().setName(originalClaxName);
+		 */
+
 		// In any case: throw an exception if a failure-driven test case completed
 		// without pinpointing any failure.
 		if (testName.endsWith("failure_Test")) {
@@ -734,7 +745,7 @@ public class TestGenerator {
 						"Spec of unexpected type " + spec.getClass().getName() + ": " + spec.getDescription());
 			}
 		}
-				
+
 		// write out the enriched test case
 		try (FileOutputStream output = new FileOutputStream(currentTestCase)) {
 			output.write(cu.toString().getBytes());
@@ -865,10 +876,15 @@ public class TestGenerator {
 			}
 		}
 		if (condToAssume != null) {
+			try {
 			Statement assumeStmt = StaticJavaParser
 					.parseStatement("org.junit.Assume.assumeTrue(" + condToAssume + ");");
 			assumeStmt.setLineComment(comment);
 			insertionPoint.addBefore(assumeStmt, targetCall);
+			} catch(Throwable e) {
+				throw e;
+			}
+
 		}
 	}
 
@@ -962,13 +978,13 @@ public class TestGenerator {
 			classpathTarget += ":" + cp.getPath();
 		}
 		retVal.add(configuration.getJava8path());
-		//retVal.add("-Xmx16G"); //4G
+		// retVal.add("-Xmx16G"); //4G
 		retVal.add("-jar");
 		retVal.add(configuration.getEvoSuiteJar());
 		retVal.add("-class");
 		retVal.add(targetClass);
 		retVal.add("-mem");
-		retVal.add("4096"); //16384
+		retVal.add("4096"); // 16384
 		retVal.add("-DCP=" + classpathTarget);
 		retVal.add("-Dassertions=false");
 		// retVal.add("-Dglobal_timeout=" + configuration.getEvoSuiteBudget());
@@ -976,23 +992,23 @@ public class TestGenerator {
 		retVal.add("-Dsearch_budget=" + evosuiteBudget);
 		retVal.add("-Dreport_dir=" + outputDir);
 		retVal.add("-Dtest_dir=" + testsDir);
-		retVal.add("-Dvirtual_fs=true"); //-Dvirtual_fs=false
-		//retVal.add("-Dselection_function=ROULETTEWHEEL"); // non-standard
+		retVal.add("-Dvirtual_fs=true"); // -Dvirtual_fs=false
+		// retVal.add("-Dselection_function=ROULETTEWHEEL"); // non-standard
 		retVal.add("-Dcriterion=PATHCONDITION");
-		//retVal.add("-Dcriterion=PATHCONDITION:BRANCH:EXCEPTION:METHOD:METHODNOEXCEPTION:CBRANCH");
+		// retVal.add("-Dcriterion=PATHCONDITION:BRANCH:EXCEPTION:METHOD:METHODNOEXCEPTION:CBRANCH");
 		retVal.add("-Demit_tests_for_criterion=PATHCONDITION");
 		retVal.add("-Dpath_condition_target=LAST_ONLY");
 		retVal.add("-Dpost_condition_check=true");
 		retVal.add("-Dsushi_statistics=true");
 		retVal.add("-Dinline=true");
-		//retVal.add("-Dsushi_modifiers_local_search=true"); // non-standard
+		// retVal.add("-Dsushi_modifiers_local_search=true"); // non-standard
 		retVal.add("-Duse_minimizer_during_crossover=false");
-		//retVal.add("-Davoid_replicas_of_individuals=true"); // non-standard
-		//retVal.add("-Dno_change_iterations_before_reset=30"); // non-standard
+		// retVal.add("-Davoid_replicas_of_individuals=true"); // non-standard
+		// retVal.add("-Dno_change_iterations_before_reset=30"); // non-standard
 		// retVal.add("-Dno_runtime_dependency");
 		retVal.add("-Dpath_condition_evaluators_dir=" + outputDir);
 		retVal.add("-Demit_tests_incrementally=true");
-		//retVal.add("-Dcrossover_function=SUSHI_HYBRID"); // non-standard
+		// retVal.add("-Dcrossover_function=SUSHI_HYBRID"); // non-standard
 		retVal.add("-Dalgorithm=DYNAMOSA");
 		retVal.add("-generateMOSuite");
 		retVal.add("-Dpath_condition=" + evaluatorDefsForEvoSuite);
@@ -1041,14 +1057,15 @@ public class TestGenerator {
 	 * @param classpathForCompilation
 	 * @param lookForPostCondViolation
 	 */
-	private static void createEvaluator(DocumentedExecutable method, String guards[], String excludingGuards[], String postConds[],
-			boolean isThrows, boolean lookForPostCondViolation, String evaluatorName, Path outputDir,
-			String classpathForCompilation) {
+	private static int createEvaluator(DocumentedExecutable method, String guards[], String excludingGuards[],
+			String postConds[], boolean isThrows, boolean lookForPostCondViolation, String evaluatorName,
+			Path outputDir, String classpathForCompilation) {
 		Checks.nonNullParameter(method, "method");
 		Checks.nonNullParameter(guards, "guardStrings");
 		Checks.nonNullParameter(evaluatorName, "evaluatorName");
 
-		final InputStream evaluatorTemplate = ClassLoader.getSystemResourceAsStream(EVALUATOR_TEMPLATE_NAME + ".template");
+		final InputStream evaluatorTemplate = ClassLoader
+				.getSystemResourceAsStream(EVALUATOR_TEMPLATE_NAME + ".template");
 		CompilationUnit cu = StaticJavaParser.parse(evaluatorTemplate);
 
 		// Set the correct package for the newly created evaluator
@@ -1062,8 +1079,8 @@ public class TestGenerator {
 				.ifPresent(c -> c.setName(evaluatorName));
 
 		// Customize and emit the evaluator
-		new EvaluatorModifierVisitor().visit(cu, new EvaluatorModifierVisitor.InstrumentationData(method, guards, excludingGuards,
-				postConds, isThrows, lookForPostCondViolation));
+		new EvaluatorModifierVisitor().visit(cu, new EvaluatorModifierVisitor.InstrumentationData(method, guards,
+				excludingGuards, postConds, isThrows, lookForPostCondViolation));
 		final Path evaluatorFolder = outputDir.resolve(packageName.replace('.', '/'));
 		final Path evaluatorPath = evaluatorFolder.resolve(evaluatorName + ".java");
 		try (FileOutputStream output = new FileOutputStream(new File(evaluatorPath.toString()))) {
@@ -1076,14 +1093,15 @@ public class TestGenerator {
 		final Path javacLogFilePath = evaluatorFolder.resolve("javac-log-" + evaluatorName + ".txt");
 		final String[] javacParameters = { "-cp", classpathForCompilation, "-d", outputDir.toString(),
 				evaluatorPath.toString() };
+		int compilationResult;
 		try (final OutputStream w = new BufferedOutputStream(Files.newOutputStream(javacLogFilePath))) {
-			compiler.run(null, w, w, javacParameters);
+			compilationResult = compiler.run(null, w, w, javacParameters);
 		} catch (IOException e) {
 			log.error("[Test generator] Unexpected I/O error while creating evaluator compilation log file "
 					+ javacLogFilePath.toString() + ": " + e);
 			throw new RuntimeException(e);
 		}
-
+		return compilationResult;
 	}
 
 	private static String bytecodeStyleSignature(DocumentedExecutable method) {

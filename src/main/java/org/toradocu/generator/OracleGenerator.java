@@ -139,14 +139,17 @@ public class OracleGenerator {
             ClassOrInterfaceDeclaration.class, c -> c.getNameAsString().equals("Aspect_Template"))
         .ifPresent(c -> c.setName(aspectName));
 
-    new MethodChangerVisitor().visit(cu, Pair.of(method, specification));
-
-    final String aspectPath =
-        configuration.getAspectsOutputDir() + File.separator + aspectName + ".java";
-    try (FileOutputStream output = new FileOutputStream(new File(aspectPath))) {
-      output.write(cu.toString().getBytes());
-    } catch (IOException e) {
-      log.error("Error during aspect creation.", e);
+    try {
+    	new MethodChangerVisitor().visit(cu, Pair.of(method, specification));
+	    final String aspectPath =
+	        configuration.getAspectsOutputDir() + File.separator + aspectName + ".java";
+	    try (FileOutputStream output = new FileOutputStream(new File(aspectPath))) {
+	      output.write(cu.toString().getBytes());
+	    } catch (IOException e) {
+	      log.error("Error during aspect creation.", e);
+	    }
+    } catch(Exception e) {
+    	log.error("Error during aspect creation.", e);
     }
   }
 
