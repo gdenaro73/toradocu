@@ -159,28 +159,30 @@ public class CommentTranslatorLLM {
 	    return recomposed;
 	}
 	
-	// Regex for tokens
+	// Regex for tokens (using non-capturing groups internally to preserve main group indexing)
 	private static final Pattern TOKEN_PATTERN = Pattern.compile(
-	        "\\s*(?:(\\d+(?:\\.\\d+)?[lLfFdD]?|0[xX][0-9a-fA-F]+[lL]?)|" + // numbers (including long/float/hex suffixes)
-	        "([a-zA-Z_][a-zA-Z0-9_]*)|" +                                  // identifiers
-	        "(==|!=|>=|<=|&&|\\|\\||[()!<>])|" +                           // operators and parentheses
-	        "(\"[^\"]*\")|" +                                              // string literals
-	        "(.))"                                                         // any other single char (fallback)
+	        "\\s*(?:(\\d+(?:\\.\\d+)?[lLfFdD]?|0[xX][0-9a-fA-F]+[lL]?)|" + // Group 1: numbers
+	        "([a-zA-Z_][a-zA-Z0-9_]*)|" +                                  // Group 2: identifiers
+	        "(==|!=|>=|<=|&&|\\|\\||[()!<>])|" +                           // Group 3: operators and parentheses
+	        "(\"(?:[^\"\\\\]|\\\\.)*\")|" +                                // Group 4: string literals
+	        "('(?:[^'\\\\]|\\\\.)*')|" +                                   // Group 5: character literals (e.g. ' ')
+	        "(.))"                                                         // Group 6: fallback single char
 	);
 
-    private static List<String> tokenize(String input) {
-        List<String> tokens = new ArrayList<>();
-        Matcher m = TOKEN_PATTERN.matcher(input);
+	private static List<String> tokenize(String input) {
+	    List<String> tokens = new ArrayList<>();
+	    Matcher m = TOKEN_PATTERN.matcher(input);
 
-        while (m.find()) {
-            if (m.group(1) != null) tokens.add(m.group(1));            // number
-            else if (m.group(2) != null) tokens.add(m.group(2));       // identifier
-            else if (m.group(3) != null) tokens.add(m.group(3));       // operator
-            else if (m.group(4) != null) tokens.add(m.group(4));       // string literal
-            else if (m.group(5) != null) tokens.add(m.group(5));       // fallback
-        }
-        return tokens;
-    }
+	    while (m.find()) {
+	        if (m.group(1) != null) tokens.add(m.group(1));            // number
+	        else if (m.group(2) != null) tokens.add(m.group(2));       // identifier
+	        else if (m.group(3) != null) tokens.add(m.group(3));       // operator
+	        else if (m.group(4) != null) tokens.add(m.group(4));       // string literal
+	        else if (m.group(5) != null) tokens.add(m.group(5));       // character literal
+	        else if (m.group(6) != null) tokens.add(m.group(6));       // fallback
+	    }
+	    return tokens;
+	}
 
     // Detect if a token is a variable (identifier)
     private static boolean isVariable(String token) {

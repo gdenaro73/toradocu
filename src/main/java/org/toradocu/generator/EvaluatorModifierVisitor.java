@@ -143,7 +143,8 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 	}
 
 	private String escapedQuotes(String s) {
-		return s.replace("\"", "\\\"");
+	    if (s == null) return "";
+	    return s.replace("\\", "\\\\").replace("\"", "\\\"");
 	}
 
 	private void addExceptionDistanceCalculator(MethodDeclaration methodDeclaration, DocumentedExecutable spec,
