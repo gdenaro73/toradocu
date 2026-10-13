@@ -339,7 +339,7 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		for (DocumentedParameter parameter : method.getParameters()) {
 			String type = parameter.getType().getTypeName();
 			type = removeParametersFromType(type).replace('$', '.');
-			condition = condition.replace("args[" + index + "]", "((" + type + ") args[" + index + "])");
+			condition = condition.replaceAll("args\\[" + index + "\\](?!\\d)", "((" + type + ") args[" + index + "])");
 			index++;
 		}
 
