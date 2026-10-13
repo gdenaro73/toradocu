@@ -9,6 +9,7 @@ import com.github.javaparser.ast.expr.BooleanLiteralExpr;
 import com.github.javaparser.ast.expr.DoubleLiteralExpr;
 import com.github.javaparser.ast.expr.EnclosedExpr;
 import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.expr.UnaryExpr;
 import com.github.javaparser.ast.stmt.Statement;
 import com.github.javaparser.ast.visitor.ModifierVisitor;
 
@@ -181,6 +182,24 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		}
 	}
 
+	private boolean isBooleanExpr(Expression expr) {
+		while (expr.isEnclosedExpr()) {
+			expr = expr.asEnclosedExpr().getInner();
+		}
+		if (expr.isBooleanLiteralExpr())
+			return true;
+		if (expr.isUnaryExpr() && expr.asUnaryExpr().getOperator() == UnaryExpr.Operator.LOGICAL_COMPLEMENT)
+			return true;
+		if (expr.isBinaryExpr()) {
+			BinaryExpr.Operator op = expr.asBinaryExpr().getOperator();
+			return op == BinaryExpr.Operator.EQUALS || op == BinaryExpr.Operator.NOT_EQUALS
+					|| op == BinaryExpr.Operator.LESS || op == BinaryExpr.Operator.LESS_EQUALS
+					|| op == BinaryExpr.Operator.GREATER || op == BinaryExpr.Operator.GREATER_EQUALS
+					|| op == BinaryExpr.Operator.AND || op == BinaryExpr.Operator.OR;
+		}
+		return false;
+	}
+
 	private Expression turnConditionToConditionDistance(Expression cond, boolean negate) {
 		if (cond.isEnclosedExpr()) {
 			EnclosedExpr enclosed = cond.asEnclosedExpr();
@@ -190,18 +209,54 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 			Expression left = binaryCond.getLeft();
 			Expression right = binaryCond.getRight();
 			Operator op = binaryCond.getOperator();
-			BooleanLiteralExpr FALSE = new BooleanLiteralExpr(false);
-			if (right.isBooleanLiteralExpr()) {
-				return turnConditionToConditionDistance(left, negate ? !right.equals(FALSE) : right.equals(FALSE));
-			} else if (left.isBooleanLiteralExpr()) {
-				return turnConditionToConditionDistance(right, negate ? !left.equals(FALSE) : left.equals(FALSE));
-			} else if (op.equals(Operator.AND) || op.equals(Operator.OR)) {
+
+			// 1. Handle logical AND / OR operators
+			if (op == Operator.AND || op == Operator.OR) {
 				Expression turnedL = turnConditionToConditionDistance(left, negate);
 				Expression turnedR = turnConditionToConditionDistance(right, negate);
-				Operator turnedOp = op.equals(Operator.AND) ? (negate ? Operator.MULTIPLY : Operator.PLUS)
+				Operator turnedOp = op == Operator.AND ? (negate ? Operator.MULTIPLY : Operator.PLUS)
 						: (negate ? Operator.PLUS : Operator.MULTIPLY);
 				return new EnclosedExpr(new BinaryExpr(turnedL, turnedR, turnedOp));
-			} else {
+			}
+
+			// 2. Handle boolean literal comparisons (e.g., x == false)
+			if (right.isBooleanLiteralExpr() && (op == Operator.EQUALS || op == Operator.NOT_EQUALS)) {
+				boolean isFalse = !right.asBooleanLiteralExpr().getValue();
+				boolean isEquals = (op == Operator.EQUALS);
+				boolean newNegate = negate ? (isEquals ? !isFalse : isFalse) : (isEquals ? isFalse : !isFalse);
+				return turnConditionToConditionDistance(left, newNegate);
+			} else if (left.isBooleanLiteralExpr() && (op == Operator.EQUALS || op == Operator.NOT_EQUALS)) {
+				boolean isFalse = !left.asBooleanLiteralExpr().getValue();
+				boolean isEquals = (op == Operator.EQUALS);
+				boolean newNegate = negate ? (isEquals ? !isFalse : isFalse) : (isEquals ? isFalse : !isFalse);
+				return turnConditionToConditionDistance(right, newNegate);
+			}
+
+			// 3. Handle boolean-to-boolean comparison (e.g., (a == 0) == (b == 0))
+			else if ((op == Operator.EQUALS || op == Operator.NOT_EQUALS)
+					&& (isBooleanExpr(left) || isBooleanExpr(right))) {
+				boolean isEquals = (op == Operator.EQUALS);
+				boolean sameState = negate ? !isEquals : isEquals;
+
+				Expression term1, term2;
+				if (sameState) {
+					// (left && right) || (!left && !right)
+					term1 = new BinaryExpr(left, right, Operator.AND);
+					term2 = new BinaryExpr(new UnaryExpr(left, UnaryExpr.Operator.LOGICAL_COMPLEMENT),
+							new UnaryExpr(right, UnaryExpr.Operator.LOGICAL_COMPLEMENT), Operator.AND);
+				} else {
+					// (left && !right) || (!left && right)
+					term1 = new BinaryExpr(left, new UnaryExpr(right, UnaryExpr.Operator.LOGICAL_COMPLEMENT),
+							Operator.AND);
+					term2 = new BinaryExpr(new UnaryExpr(left, UnaryExpr.Operator.LOGICAL_COMPLEMENT), right,
+							Operator.AND);
+				}
+				Expression equiv = new BinaryExpr(new EnclosedExpr(term1), new EnclosedExpr(term2), Operator.OR);
+				return turnConditionToConditionDistance(equiv, false);
+			}
+
+			// 4. Handle numeric comparisons
+			else {
 				Operator turnedOp = op;
 				if (negate) {
 					switch (op) {
@@ -223,11 +278,17 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 					case LESS_EQUALS:
 						turnedOp = Operator.GREATER;
 						break;
+					case BINARY_AND:
+					case BINARY_OR:
+					case XOR:
+						return new DoubleLiteralExpr(1);
 					default:
-						throw new RuntimeException("Unexpected comparison op in: " + cond);
+						throw new IllegalArgumentException(
+								"Unsupported binary operator in condition distance: " + op + " in " + cond);
 					}
 				}
-				boolean constantDistance = turnedOp == Operator.NOT_EQUALS;
+
+				boolean constantDistance = (turnedOp == Operator.NOT_EQUALS);
 				if (!constantDistance && turnedOp == Operator.EQUALS) {
 					// check if it is == for comparing references
 					ArrayList<Expression> wl = new ArrayList<>();
