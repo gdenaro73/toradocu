@@ -31,18 +31,17 @@ import org.toradocu.extractor.DocumentedParameter;
 import org.toradocu.util.Checks;
 
 /**
- * Visitor that modifies the evaluator template (see method {@code visit}) to generate an evaluator
- * for a {@code ExecutableMember}.
+ * Visitor that modifies the evaluator template (see method {@code visit}) to
+ * generate an evaluator for a {@code ExecutableMember}.
  */
 public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 
 	public static final String RECEIVEROBJECT_FIELD = "___INTERNAL__receiverObjectID__";
 	public static final String ARGS_FIELD = "___INTERNAL__args__";
 	public static final String RETVAL_FIELD = "___INTERNAL__retVal_";
-	
+
 	/** {@code Logger} for this class. */
 	private static final Logger log = LoggerFactory.getLogger(EvaluatorModifierVisitor.class);
-
 
 	public static class InstrumentationData {
 		private final DocumentedExecutable method;
@@ -51,7 +50,9 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		private final String[] postconds;
 		private final boolean isThrows;
 		private final boolean lookForPostCondViolation;
-		InstrumentationData(DocumentedExecutable method, String[] preconds, String[] excludingGuards, String[] postconds, boolean isThrows, boolean lookForPostCondViolation) {
+
+		InstrumentationData(DocumentedExecutable method, String[] preconds, String[] excludingGuards,
+				String[] postconds, boolean isThrows, boolean lookForPostCondViolation) {
 			Checks.nonNullParameter(method, "method");
 			Checks.nonNullParameter(preconds, "preconds");
 			Checks.nonNullParameter(postconds, "postconds");
@@ -70,9 +71,11 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 	 * injecting the appropriate source code to get an evaluator for the method.
 	 *
 	 * @param methodDeclaration the method declaration of the method to visit
-	 * @param method the {@code ExecutableMember} for which to generate the evaluator
+	 * @param method            the {@code ExecutableMember} for which to generate
+	 *                          the evaluator
 	 * @return the {@code methodDeclaration} modified as and when needed
-	 * @throws NullPointerException if {@code methodDeclaration} or {@code executableMember} is null
+	 * @throws NullPointerException if {@code methodDeclaration} or
+	 *                              {@code executableMember} is null
 	 */
 	@Override
 	public Node visit(MethodDeclaration methodDeclaration, Object data) {
@@ -85,13 +88,18 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		try {
 			String methodName = methodDeclaration.getName().asString();
 			if (methodName.equals("populateCalculators_preconds")) {
-				addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.preconds, false, false);    		
-				addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.excludingGuards, true, false);    		
+				addConditionDistanceCalculators(methodDeclaration, instrumentationData.method,
+						instrumentationData.preconds, false, false);
+				addConditionDistanceCalculators(methodDeclaration, instrumentationData.method,
+						instrumentationData.excludingGuards, true, false);
 			} else if (methodName.equals("populateCalculators_postconds") && instrumentationData.postconds.length > 0) {
 				if (instrumentationData.isThrows) {
-					addExceptionDistanceCalculator(methodDeclaration, instrumentationData.method, instrumentationData.postconds[0], instrumentationData.lookForPostCondViolation);    		
+					addExceptionDistanceCalculator(methodDeclaration, instrumentationData.method,
+							instrumentationData.postconds[0], instrumentationData.lookForPostCondViolation);
 				} else {
-					addConditionDistanceCalculators(methodDeclaration, instrumentationData.method, instrumentationData.postconds, instrumentationData.lookForPostCondViolation, instrumentationData.lookForPostCondViolation);    		
+					addConditionDistanceCalculators(methodDeclaration, instrumentationData.method,
+							instrumentationData.postconds, instrumentationData.lookForPostCondViolation,
+							instrumentationData.lookForPostCondViolation);
 				}
 			} else if (methodName.equals("test0") || methodName.equals("test1")) {
 				// Set the correct input parameters for the newly created evaluator
@@ -113,71 +121,70 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 				}
 				Statement stmt = StaticJavaParser.parseStatement(ARGS_FIELD + " = new Object[] {" + allNames + "};");
 				methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(0, stmt));
-			} else if (methodName.equals("toString")) { 
-				Statement stmt = StaticJavaParser.parseStatement("s += \"" + 
-						(instrumentationData.preconds.length > 0 ? escapedQuotes(instrumentationData.preconds[0]) : "true") + " ---> " +
-						(instrumentationData.postconds.length > 0 ? escapedQuotes(instrumentationData.postconds[0]) : "true") + "\";");
-				methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(1, stmt));			
+			} else if (methodName.equals("toString")) {
+				Statement stmt = StaticJavaParser.parseStatement("s += \""
+						+ (instrumentationData.preconds.length > 0 ? escapedQuotes(instrumentationData.preconds[0])
+								: "true")
+						+ " ---> "
+						+ (instrumentationData.postconds.length > 0 ? escapedQuotes(instrumentationData.postconds[0])
+								: "true")
+						+ "\";");
+				methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(1, stmt));
 			}
 			return methodDeclaration;
 		} catch (Exception e) {
-			log.error("* Method " + configuration.getTargetClass() + "." + instrumentationData.method.getSignature() + 
-					": Issue while compiling spec into corresponding evaluator: " + 
-					"PRECONDS = " + Arrays.toString(instrumentationData.preconds) + " --- " +
-					"POSTCONDS = " + Arrays.toString(instrumentationData.postconds));
+			log.error("* Method " + configuration.getTargetClass() + "." + instrumentationData.method.getSignature()
+					+ ": Issue while compiling spec into corresponding evaluator: " + "PRECONDS = "
+					+ Arrays.toString(instrumentationData.preconds) + " --- " + "POSTCONDS = "
+					+ Arrays.toString(instrumentationData.postconds));
 			return methodDeclaration;
 		}
 	}
-	
+
 	private String escapedQuotes(String s) {
 		return s.replace("\"", "\\\"");
 	}
 
-	private void addExceptionDistanceCalculator(MethodDeclaration methodDeclaration, DocumentedExecutable spec, String exceptionCanonicalName, boolean lookForFailure) {
+	private void addExceptionDistanceCalculator(MethodDeclaration methodDeclaration, DocumentedExecutable spec,
+			String exceptionCanonicalName, boolean lookForFailure) {
 		String typeOfCalculator = lookForFailure ? "NegExceptionDistanceCalculator" : "ExceptionDistanceCalculator";
-		String code = "algo.calculators.add(new " + typeOfCalculator + "() {\n" + 
-				"    String exceptionCanonicalName()  {\n" + 
-				"        return \"" + exceptionCanonicalName + "\";\n" + 
-				"    }\n" + 
-				"});\n";  
-		methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(1, StaticJavaParser.parseStatement(code)));
+		String code = "algo.calculators.add(new " + typeOfCalculator + "() {\n"
+				+ "    String exceptionCanonicalName()  {\n" + "        return \"" + exceptionCanonicalName + "\";\n"
+				+ "    }\n" + "});\n";
+		methodDeclaration.getBody()
+				.ifPresent(blockStmt -> blockStmt.addStatement(1, StaticJavaParser.parseStatement(code)));
 	}
 
-	private void addConditionDistanceCalculators(MethodDeclaration methodDeclaration, DocumentedExecutable documentedExecutable, String[] conds, boolean aimToNotSatisfiedConds, boolean evaluateByDisjunction) {
+	private void addConditionDistanceCalculators(MethodDeclaration methodDeclaration,
+			DocumentedExecutable documentedExecutable, String[] conds, boolean aimToNotSatisfiedConds,
+			boolean evaluateByDisjunction) {
 		if (evaluateByDisjunction) {
 			String code = "DistanceAlgo algo = computeDistanceWithDisjunctiveAlgo();";
-			methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.replace(blockStmt.getStatement(0), StaticJavaParser.parseStatement(code)));			
+			methodDeclaration.getBody().ifPresent(
+					blockStmt -> blockStmt.replace(blockStmt.getStatement(0), StaticJavaParser.parseStatement(code)));
 		}
 		for (int i = 0; i < conds.length; ++i) {
 			String cond = addCasting(conds[i], documentedExecutable);
 			Expression condExpr = StaticJavaParser.parseExpression(cond);
 			Expression condDistance = turnConditionToConditionDistance(condExpr, false);
-			String formattedCond = condExpr.toString().
-					replace("receiverObjectID", RECEIVEROBJECT_FIELD).
-					replace("args", ARGS_FIELD).
-					replace("methodResultID", RETVAL_FIELD);
-			String formattedCondDistance = condDistance.toString().
-					replace("receiverObjectID", RECEIVEROBJECT_FIELD).
-					replace("args", ARGS_FIELD).
-					replace("methodResultID", RETVAL_FIELD);
-			String typeOfCalculator = aimToNotSatisfiedConds ? "NegConditionDistanceCalculator" : "ConditionDistanceCalculator";
-			String code = "algo.calculators.add(new " +  typeOfCalculator + "() {\n" + 
-					"    boolean condition()  {\n" + 
-					"        return " + formattedCond + ";\n" + 
-					"    }\n" + 
-					"    double cdistance()  {\n" + 
-					"        return " + formattedCondDistance + ";\n" +
-					"    }\n" + 
-					"});\n";  
-			methodDeclaration.getBody().ifPresent(blockStmt -> blockStmt.addStatement(1, StaticJavaParser.parseStatement(code)));
+			String formattedCond = condExpr.toString().replace("receiverObjectID", RECEIVEROBJECT_FIELD)
+					.replace("args", ARGS_FIELD).replace("methodResultID", RETVAL_FIELD);
+			String formattedCondDistance = condDistance.toString().replace("receiverObjectID", RECEIVEROBJECT_FIELD)
+					.replace("args", ARGS_FIELD).replace("methodResultID", RETVAL_FIELD);
+			String typeOfCalculator = aimToNotSatisfiedConds ? "NegConditionDistanceCalculator"
+					: "ConditionDistanceCalculator";
+			String code = "algo.calculators.add(new " + typeOfCalculator + "() {\n" + "    boolean condition()  {\n"
+					+ "        return " + formattedCond + ";\n" + "    }\n" + "    double cdistance()  {\n"
+					+ "        return " + formattedCondDistance + ";\n" + "    }\n" + "});\n";
+			methodDeclaration.getBody()
+					.ifPresent(blockStmt -> blockStmt.addStatement(1, StaticJavaParser.parseStatement(code)));
 		}
 	}
-
 
 	private Expression turnConditionToConditionDistance(Expression cond, boolean negate) {
 		if (cond.isEnclosedExpr()) {
 			EnclosedExpr enclosed = cond.asEnclosedExpr();
-			return new EnclosedExpr(turnConditionToConditionDistance(enclosed.getInner(), negate));		  
+			return new EnclosedExpr(turnConditionToConditionDistance(enclosed.getInner(), negate));
 		} else if (cond.isBinaryExpr()) {
 			BinaryExpr binaryCond = cond.asBinaryExpr();
 			Expression left = binaryCond.getLeft();
@@ -191,48 +198,61 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 			} else if (op.equals(Operator.AND) || op.equals(Operator.OR)) {
 				Expression turnedL = turnConditionToConditionDistance(left, negate);
 				Expression turnedR = turnConditionToConditionDistance(right, negate);
-				Operator turnedOp = op.equals(Operator.AND) ?
-						(negate ? Operator.MULTIPLY : Operator.PLUS) :
-							(negate ? Operator.PLUS : Operator.MULTIPLY);				
-						return new EnclosedExpr(new BinaryExpr(turnedL, turnedR, turnedOp));
+				Operator turnedOp = op.equals(Operator.AND) ? (negate ? Operator.MULTIPLY : Operator.PLUS)
+						: (negate ? Operator.PLUS : Operator.MULTIPLY);
+				return new EnclosedExpr(new BinaryExpr(turnedL, turnedR, turnedOp));
 			} else {
 				Operator turnedOp = op;
 				if (negate) {
 					switch (op) {
-					case EQUALS: turnedOp = Operator.NOT_EQUALS; break;
-					case NOT_EQUALS: turnedOp = Operator.EQUALS; break;
-					case GREATER: turnedOp = Operator.LESS_EQUALS; break;
-					case GREATER_EQUALS: turnedOp = Operator.LESS; break;
-					case LESS: turnedOp = Operator.GREATER_EQUALS; break;
-					case LESS_EQUALS: turnedOp = Operator.GREATER; break;
-					default: throw new RuntimeException("Unexpected comparison op in: " + cond);
+					case EQUALS:
+						turnedOp = Operator.NOT_EQUALS;
+						break;
+					case NOT_EQUALS:
+						turnedOp = Operator.EQUALS;
+						break;
+					case GREATER:
+						turnedOp = Operator.LESS_EQUALS;
+						break;
+					case GREATER_EQUALS:
+						turnedOp = Operator.LESS;
+						break;
+					case LESS:
+						turnedOp = Operator.GREATER_EQUALS;
+						break;
+					case LESS_EQUALS:
+						turnedOp = Operator.GREATER;
+						break;
+					default:
+						throw new RuntimeException("Unexpected comparison op in: " + cond);
 					}
 				}
 				boolean constantDistance = turnedOp == Operator.NOT_EQUALS;
 				if (!constantDistance && turnedOp == Operator.EQUALS) {
-					//check if it is == for comparing references
+					// check if it is == for comparing references
 					ArrayList<Expression> wl = new ArrayList<>();
 					wl.add(left);
 					wl.add(right);
-					for (Expression e: wl) {
+					for (Expression e : wl) {
 						while (e.isEnclosedExpr()) {
 							e = e.asEnclosedExpr().getInner();
 						}
-						if (e.isNullLiteralExpr() || e.isFieldAccessExpr() || 
-								(e.isCastExpr() && !e.asCastExpr().getType().isPrimitiveType())) {
+						if (e.isNullLiteralExpr() || e.isFieldAccessExpr()
+								|| (e.isCastExpr() && !e.asCastExpr().getType().isPrimitiveType())) {
 							constantDistance = true;
 							break;
 						}
 					}
 				}
-				
+
 				if (constantDistance) {
-					return new DoubleLiteralExpr(1);				  
+					return new DoubleLiteralExpr(1);
 				} else {
 					if (turnedOp == Operator.EQUALS) {
 						toString();
 					}
-					BinaryExpr distance = new BinaryExpr(new EnclosedExpr(left), new EnclosedExpr(right), Operator.MINUS);
+					BinaryExpr distance = new BinaryExpr(new EnclosedExpr(left), new EnclosedExpr(right),
+							Operator.MINUS);
 					return distance;
 				}
 			}
@@ -242,11 +262,11 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 	}
 
 	/**
-	 * Add the appropriate cast to each mention of a method argument or target in a given Java boolean
-	 * condition.
+	 * Add the appropriate cast to each mention of a method argument or target in a
+	 * given Java boolean condition.
 	 *
 	 * @param condition the Java boolean condition to which add the casts
-	 * @param method the method to which the {@code condition} belongs
+	 * @param method    the method to which the {@code condition} belongs
 	 * @return the input condition with casted method arguments and target
 	 * @throws NullPointerException if {@code condition} or {@code method} is null
 	 */
@@ -266,18 +286,14 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		String returnType = simpleTypeName(method.getReturnType().getType());
 		returnType = removeParametersFromType(returnType).replace('$', '.');
 		if (!returnType.equals("void")) {
-			condition =
-					condition.replace(
-							Configuration.RETURN_VALUE,
-							"((" + returnType + ")" + Configuration.RETURN_VALUE + ")");
+			condition = condition.replace(Configuration.RETURN_VALUE,
+					"((" + returnType + ")" + Configuration.RETURN_VALUE + ")");
 		}
 
 		// Casting of target object in condition.
 		String type = method.getDeclaringClass().getName();
 		type = removeParametersFromType(type).replace('$', '.');
-		condition =
-				condition.replace(
-						Configuration.RECEIVER, "((" + type + ") " + Configuration.RECEIVER + ")");
+		condition = condition.replace(Configuration.RECEIVER, "((" + type + ") " + Configuration.RECEIVER + ")");
 		return condition;
 	}
 
@@ -285,7 +301,8 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		if (type instanceof TypeVariable) {
 			return "java.lang.Object";
 		} else if (type instanceof WildcardType) {
-			//TODO: shall we consider the lowerbound type? ((WildcardType) type).getLowerBounds();
+			// TODO: shall we consider the lowerbound type? ((WildcardType)
+			// type).getLowerBounds();
 			return "java.lang.Object";
 		} else if (type instanceof GenericArrayType) {
 			return simpleTypeName(((GenericArrayType) type).getGenericComponentType()) + "[]";
@@ -295,7 +312,8 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 	}
 
 	/**
-	 * Remove the type parameter(s) from a generic type and returns the resulting string.
+	 * Remove the type parameter(s) from a generic type and returns the resulting
+	 * string.
 	 *
 	 * @param genericType the generic type to be cleaned
 	 * @return the type without parameter(s)
