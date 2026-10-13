@@ -160,13 +160,13 @@ public class CommentTranslatorLLM {
 	}
 	
 	// Regex for tokens
-    private static final Pattern TOKEN_PATTERN = Pattern.compile(
-            "\\s*(?:(\\d+)|" +                 // numbers
-            "([a-zA-Z_][a-zA-Z0-9_]*)|" +      // identifiers
-            "(==|!=|>=|<=|&&|\\|\\||[()!<>])|" + // operators and parentheses
-            "(\"[^\"]*\")|" +                  // string literals
-            "(.))"                             // any other single char (fallback)
-    );
+	private static final Pattern TOKEN_PATTERN = Pattern.compile(
+	        "\\s*(?:(\\d+(?:\\.\\d+)?[lLfFdD]?|0[xX][0-9a-fA-F]+[lL]?)|" + // numbers (including long/float/hex suffixes)
+	        "([a-zA-Z_][a-zA-Z0-9_]*)|" +                                  // identifiers
+	        "(==|!=|>=|<=|&&|\\|\\||[()!<>])|" +                           // operators and parentheses
+	        "(\"[^\"]*\")|" +                                              // string literals
+	        "(.))"                                                         // any other single char (fallback)
+	);
 
     private static List<String> tokenize(String input) {
         List<String> tokens = new ArrayList<>();
