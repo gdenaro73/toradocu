@@ -244,7 +244,7 @@ public class TestGenerator {
 
 		// Create output directory where test cases are saved.
 		final Path testsDir = Paths.get(configuration.getTestOutputDir()).resolve(TESTCASES_FOLDER);
-		final boolean testsDirCreationSucceeded = createOutputDir(testsDir.toString(), true);
+		final boolean testsDirCreationSucceeded = createOutputDir(testsDir.toString(), false);
 		if (!testsDirCreationSucceeded) {
 			log.error("Test generation failed, cannot create dir:" + testsDir);
 			return;
@@ -836,9 +836,14 @@ public class TestGenerator {
 						+ insertionPoint.getParentNode());
 			}
 		}
-		Statement assertStmt = StaticJavaParser.parseStatement("org.junit.Assert.assertTrue(" + oracle + ");");
-		assertStmt.setLineComment(comment);
-		insertionPoint.addAfter(assertStmt, targetCallToConsider);
+		try {
+			Statement assertStmt = StaticJavaParser.parseStatement("org.junit.Assert.assertTrue(" + oracle + ");");
+			assertStmt.setLineComment(comment);
+			insertionPoint.addAfter(assertStmt, targetCallToConsider);
+		} catch (Exception e) {
+			throw e;
+		}
+
 	}
 
 	private static void addAssumeClause(Specification spec, ExpressionStmt targetCall,
@@ -877,11 +882,11 @@ public class TestGenerator {
 		}
 		if (condToAssume != null) {
 			try {
-			Statement assumeStmt = StaticJavaParser
-					.parseStatement("org.junit.Assume.assumeTrue(" + condToAssume + ");");
-			assumeStmt.setLineComment(comment);
-			insertionPoint.addBefore(assumeStmt, targetCall);
-			} catch(Throwable e) {
+				Statement assumeStmt = StaticJavaParser
+						.parseStatement("org.junit.Assume.assumeTrue(" + condToAssume + ");");
+				assumeStmt.setLineComment(comment);
+				insertionPoint.addBefore(assumeStmt, targetCall);
+			} catch (Throwable e) {
 				throw e;
 			}
 
