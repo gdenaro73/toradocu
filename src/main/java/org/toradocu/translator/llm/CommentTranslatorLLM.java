@@ -61,6 +61,7 @@ public class CommentTranslatorLLM {
 							.getPreSpecifications()) {
 						if (preSpecification.isSuccessfullyTranslated()) {
 							String conditionText = replaceWithArgs(preSpecification.getConditionText(), argsMap);
+							conditionText = conditionText.replace("receiverObject", "receiverObjectID");
 							final Guard guard = new Guard(preSpecification.getDescription(), conditionText);
 							PreSpecification presSpec = new PreSpecification(preSpecification.getDescription(), guard);
 							preSpecifications.add(presSpec);
@@ -163,7 +164,7 @@ public class CommentTranslatorLLM {
 	private static final Pattern TOKEN_PATTERN = Pattern.compile(
 	        "\\s*(?:(\\d+(?:\\.\\d+)?[lLfFdD]?|0[xX][0-9a-fA-F]+[lL]?)|" + // Group 1: numbers
 	        "([a-zA-Z_][a-zA-Z0-9_]*)|" +                                  // Group 2: identifiers
-	        "(==|!=|>=|<=|&&|\\|\\||[()!<>])|" +                           // Group 3: operators and parentheses
+	        "(==|!=|>=|<=|&&|\\|\\||->|<<|>>|[()!<>])|" +                  // Group 3: operators and parentheses
 	        "(\"(?:[^\"\\\\]|\\\\.)*\")|" +                                // Group 4: string literals
 	        "('(?:[^'\\\\]|\\\\.)*')|" +                                   // Group 5: character literals (e.g. ' ')
 	        "(.))"                                                         // Group 6: fallback single char
