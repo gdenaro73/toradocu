@@ -17,6 +17,7 @@ import static org.toradocu.Toradocu.configuration;
 
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
@@ -143,8 +144,9 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 	}
 
 	private String escapedQuotes(String s) {
-	    if (s == null) return "";
-	    return s.replace("\\", "\\\\").replace("\"", "\\\"");
+		if (s == null)
+			return "";
+		return s.replace("\\", "\\\\").replace("\"", "\\\"");
 	}
 
 	private void addExceptionDistanceCalculator(MethodDeclaration methodDeclaration, DocumentedExecutable spec,
@@ -168,7 +170,7 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		for (int i = 0; i < conds.length; ++i) {
 			String cond = addCasting(conds[i], documentedExecutable);
 			Expression condExpr = StaticJavaParser.parseExpression(cond);
-			Expression condDistance = turnConditionToConditionDistance(condExpr, false);
+			Expression condDistance = turnConditionToConditionDistance(condExpr.clone(), false);
 			String formattedCond = condExpr.toString().replace("receiverObjectID", RECEIVEROBJECT_FIELD)
 					.replace("args", ARGS_FIELD).replace("methodResultID", RETVAL_FIELD);
 			String formattedCondDistance = condDistance.toString().replace("receiverObjectID", RECEIVEROBJECT_FIELD)
@@ -336,26 +338,34 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		Checks.nonNullParameter(condition, "condition");
 		Checks.nonNullParameter(method, "method");
 
+		java.lang.reflect.Type[] genericParamTypes = null;
+		if (method.getExecutable() != null) {
+			genericParamTypes = method.getExecutable().getGenericParameterTypes();
+		}
+
 		int index = 0;
 		for (DocumentedParameter parameter : method.getParameters()) {
-			String type = parameter.getType().getTypeName();
-			type = removeParametersFromType(type).replace('$', '.');
+			String type;
+			if (genericParamTypes != null && index < genericParamTypes.length) {
+				type = formatType(genericParamTypes[index], false);
+			} else {
+				type = formatType(parameter.getType(), false);
+			}
 			condition = condition.replaceAll("args\\[" + index + "\\](?!\\d)", "((" + type + ") args[" + index + "])");
 			index++;
 		}
 
 		// Casting of result object in condition.
-		String returnType = simpleTypeName(method.getReturnType().getType());
-		returnType = removeParametersFromType(returnType).replace('$', '.');
+		String returnType = formatType(method.getReturnType().getType(), false);
 		if (!returnType.equals("void")) {
 			condition = condition.replace(Configuration.RETURN_VALUE,
 					"((" + returnType + ")" + Configuration.RETURN_VALUE + ")");
 		}
 
 		// Casting of target object in condition.
-		String type = method.getDeclaringClass().getName();
-		type = removeParametersFromType(type).replace('$', '.');
+		String type = method.getDeclaringClass().getName().replace('$', '.');
 		condition = condition.replace(Configuration.RECEIVER, "((" + type + ") " + Configuration.RECEIVER + ")");
+
 		return condition;
 	}
 
@@ -374,18 +384,56 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 	}
 
 	/**
-	 * Remove the type parameter(s) from a generic type and returns the resulting
-	 * string.
-	 *
-	 * @param genericType the generic type to be cleaned
-	 * @return the type without parameter(s)
+	 * Formats a reflect Type for casting in non-generic generated code. - Replaces
+	 * type variables (e.g., T, K) and wildcards (?) with java.lang.Object (or their
+	 * upper bound) to avoid wildcard capture errors during compilation. - Preserves
+	 * concrete generic arguments (e.g., Map<java.lang.Object, java.lang.Integer>).
 	 */
-	@NotNull
-	private static String removeParametersFromType(String genericType) {
-		int generics = genericType.indexOf("<");
-		if (generics != -1) {
-			return genericType.substring(0, generics) + genericType.substring(genericType.lastIndexOf(">") + 1);
+	private static String formatType(Type type, boolean inTypeArguments) {
+		if (type == null) {
+			return "java.lang.Object";
 		}
-		return genericType;
+
+		if (type instanceof Class<?>) {
+			Class<?> clazz = (Class<?>) type;
+			if (clazz.isArray()) {
+				return formatType(clazz.getComponentType(), inTypeArguments) + "[]";
+			}
+			return clazz.getName().replace('$', '.');
+		} else if (type instanceof ParameterizedType) {
+			ParameterizedType pType = (ParameterizedType) type;
+			String raw = formatType(pType.getRawType(), inTypeArguments);
+			Type[] args = pType.getActualTypeArguments();
+			if (args == null || args.length == 0) {
+				return raw;
+			}
+			StringBuilder sb = new StringBuilder(raw).append("<");
+			for (int i = 0; i < args.length; i++) {
+				if (i > 0)
+					sb.append(", ");
+				sb.append(formatType(args[i], true));
+			}
+			sb.append(">");
+			return sb.toString();
+		} else if (type instanceof TypeVariable<?>) {
+			TypeVariable<?> typeVar = (TypeVariable<?>) type;
+			Type[] bounds = typeVar.getBounds();
+			if (bounds != null && bounds.length > 0 && bounds[0] != Object.class) {
+				return formatType(bounds[0], inTypeArguments);
+			}
+			return "java.lang.Object";
+		} else if (type instanceof WildcardType) {
+			WildcardType wType = (WildcardType) type;
+			Type[] upperBounds = wType.getUpperBounds();
+			if (upperBounds != null && upperBounds.length > 0) {
+				return formatType(upperBounds[0], inTypeArguments);
+			}
+			return "java.lang.Object";
+		} else if (type instanceof GenericArrayType) {
+			GenericArrayType gType = (GenericArrayType) type;
+			return formatType(gType.getGenericComponentType(), inTypeArguments) + "[]";
+		} else {
+			return type.getTypeName().replace('$', '.');
+		}
 	}
 }
