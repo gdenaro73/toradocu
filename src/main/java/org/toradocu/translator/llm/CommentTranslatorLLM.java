@@ -118,16 +118,16 @@ public class CommentTranslatorLLM {
 		}
 		return specs;
 	}
-	
+
 	private static String eraseGenerics(String signature) {
-	    // Step 1: Remove generic declarations like <V, E>
-	    String noTypeParams = signature.replaceAll("<[^>]*>", "");
+		// Step 1: Remove generic declarations like <V, E>
+		String noTypeParams = signature.replaceAll("<[^>]*>", "");
 
-	    // Step 2: Replace standalone generic type variables with Object
-	    // Matches words like V, E, K, T etc., but avoids replacing actual class names
-	    String replacedTypeVars = noTypeParams.replaceAll("\\b[A-Z]\\b", "Object");
+		// Step 2: Replace standalone generic type variables with Object
+		// Matches words like V, E, K, T etc., but avoids replacing actual class names
+		String replacedTypeVars = noTypeParams.replaceAll("\\b[A-Z]\\b", "Object");
 
-	    return replacedTypeVars;
+		return replacedTypeVars;
 	}
 
 	private static Map<String, String> createArgsMap(List<String> paramNames) {
@@ -141,72 +141,79 @@ public class CommentTranslatorLLM {
 	}
 
 	private static String replaceWithArgs(String input, Map<String, String> argsMap) {
-	    List<String> tokens = tokenize(input);
+		List<String> tokens = tokenize(input);
 
-	    List<String> processed = new ArrayList<>();
-	    for (int i = 0; i < tokens.size(); i++) {
-	        String t = tokens.get(i);
-	        String prev = (i > 0) ? tokens.get(i - 1) : null;
+		List<String> processed = new ArrayList<>();
+		for (int i = 0; i < tokens.size(); i++) {
+			String t = tokens.get(i);
+			String prev = (i > 0) ? tokens.get(i - 1) : null;
 
-	        // Replace only standalone identifiers, not member names after '.'
-	        if (isVariable(t) && argsMap.containsKey(t) && !".".equals(prev)) {
-	            processed.add(argsMap.get(t));
-	        } else {
-	            processed.add(t);
-	        }
-	    }
+			// Replace only standalone identifiers, not member names after '.'
+			if (isVariable(t) && argsMap.containsKey(t) && !".".equals(prev)) {
+				processed.add(argsMap.get(t));
+			} else {
+				processed.add(t);
+			}
+		}
 
-	    String recomposed = recompose(processed);
-	    return recomposed;
+		String recomposed = recompose(processed);
+		return recomposed;
 	}
-	
-	// Regex for tokens (using non-capturing groups internally to preserve main group indexing)
-	private static final Pattern TOKEN_PATTERN = Pattern.compile(
-	        "\\s*(?:(\\d+(?:\\.\\d+)?[lLfFdD]?|0[xX][0-9a-fA-F]+[lL]?)|" + // Group 1: numbers
-	        "([a-zA-Z_][a-zA-Z0-9_]*)|" +                                  // Group 2: identifiers
-	        "(==|!=|>=|<=|&&|\\|\\||->|<<|>>|[()!<>])|" +                  // Group 3: operators and parentheses
-	        "(\"(?:[^\"\\\\]|\\\\.)*\")|" +                                // Group 4: string literals
-	        "('(?:[^'\\\\]|\\\\.)*')|" +                                   // Group 5: character literals (e.g. ' ')
-	        "(.))"                                                         // Group 6: fallback single char
-	);
+
+	// Regex for tokens (using non-capturing groups internally to preserve main
+	// group indexing)
+	private static final Pattern TOKEN_PATTERN = Pattern
+			.compile("\\s*(?:(\\d+(?:\\.\\d+)?[lLfFdD]?|0[xX][0-9a-fA-F]+[lL]?)|" + // Group 1: numbers
+					"([a-zA-Z_][a-zA-Z0-9_]*)|" + // Group 2: identifiers
+					"(==|!=|>=|<=|&&|\\|\\||->|<<|>>|[()!<>])|" + // Group 3: operators and parentheses
+					"(\"(?:[^\"\\\\]|\\\\.)*\")|" + // Group 4: string literals
+					"('(?:[^'\\\\]|\\\\.)*')|" + // Group 5: character literals (e.g. ' ')
+					"(.))" // Group 6: fallback single char
+			);
 
 	private static List<String> tokenize(String input) {
-	    List<String> tokens = new ArrayList<>();
-	    Matcher m = TOKEN_PATTERN.matcher(input);
+		List<String> tokens = new ArrayList<>();
+		Matcher m = TOKEN_PATTERN.matcher(input);
 
-	    while (m.find()) {
-	        if (m.group(1) != null) tokens.add(m.group(1));            // number
-	        else if (m.group(2) != null) tokens.add(m.group(2));       // identifier
-	        else if (m.group(3) != null) tokens.add(m.group(3));       // operator
-	        else if (m.group(4) != null) tokens.add(m.group(4));       // string literal
-	        else if (m.group(5) != null) tokens.add(m.group(5));       // character literal
-	        else if (m.group(6) != null) tokens.add(m.group(6));       // fallback
-	    }
-	    return tokens;
+		while (m.find()) {
+			if (m.group(1) != null)
+				tokens.add(m.group(1)); // number
+			else if (m.group(2) != null)
+				tokens.add(m.group(2)); // identifier
+			else if (m.group(3) != null)
+				tokens.add(m.group(3)); // operator
+			else if (m.group(4) != null)
+				tokens.add(m.group(4)); // string literal
+			else if (m.group(5) != null)
+				tokens.add(m.group(5)); // character literal
+			else if (m.group(6) != null)
+				tokens.add(m.group(6)); // fallback
+		}
+		return tokens;
 	}
 
-    // Detect if a token is a variable (identifier)
-    private static boolean isVariable(String token) {
-        return token.matches("[a-zA-Z_][a-zA-Z0-9_]*");
-    }
+	// Detect if a token is a variable (identifier)
+	private static boolean isVariable(String token) {
+		return token.matches("[a-zA-Z_][a-zA-Z0-9_]*");
+	}
 
-    // Recompose tokens into a string
-    private static String recompose(List<String> tokens) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < tokens.size(); i++) {
-            String t = tokens.get(i);
+	// Recompose tokens into a string
+	private static String recompose(List<String> tokens) {
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < tokens.size(); i++) {
+			String t = tokens.get(i);
 
-            // Add space between identifiers, numbers, and literals
-            if (i > 0 && needsSpace(tokens.get(i - 1), t)) {
-                sb.append(" ");
-            }
-            sb.append(t);
-        }
-        return sb.toString();
-    }
+			// Add space between identifiers, numbers, and literals
+			if (i > 0 && needsSpace(tokens.get(i - 1), t)) {
+				sb.append(" ");
+			}
+			sb.append(t);
+		}
+		return sb.toString();
+	}
 
-    private static boolean needsSpace(String prev, String curr) {
-        return (prev.matches("[a-zA-Z0-9_\"]+") && curr.matches("[a-zA-Z0-9_\"]+"));
-    }
+	private static boolean needsSpace(String prev, String curr) {
+		return (prev.matches("[a-zA-Z0-9_\"]+") && curr.matches("[a-zA-Z0-9_\"]+"));
+	}
 
 }
