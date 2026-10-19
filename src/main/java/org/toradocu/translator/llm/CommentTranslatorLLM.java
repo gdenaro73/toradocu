@@ -4,12 +4,16 @@ import static java.util.stream.Collectors.toList;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.toradocu.conf.Configuration;
 import org.toradocu.extractor.DocumentedExecutable;
 import org.toradocu.extractor.DocumentedParameter;
@@ -26,26 +30,28 @@ import randoop.condition.specification.ThrowsSpecification;
 
 public class CommentTranslatorLLM {
 
+	private static final Logger log = LoggerFactory.getLogger(CommentTranslatorLLM.class);
+
 	public static Map<DocumentedExecutable, OperationSpecification> createSpecifications(
 			List<DocumentedExecutable> members, List<MethodDetails> methodsSpecs) {
 		Map<DocumentedExecutable, OperationSpecification> specs = new LinkedHashMap<>();
+		Set<MethodDetails> matchedMethodSpecs = new HashSet<>();
+
 		for (DocumentedExecutable member : members) {
-			// TODO: The following way of constructing the signature is less than ideal and
-			// may not work in all cases
-			String paramsSignature = "";
+			StringBuilder paramsSignature = new StringBuilder();
 			for (DocumentedParameter param : member.getParameters()) {
 				String paramString = param.getType().getSimpleName() + " " + param.getName();
-				paramsSignature = paramsSignature + paramString + ", ";
+				paramsSignature.append(paramString).append(", ");
 			}
 			if (paramsSignature.length() != 0) {
-				paramsSignature = paramsSignature.substring(0, paramsSignature.length() - 2);
+				paramsSignature.setLength(paramsSignature.length() - 2);
 			}
-			String methodSignature = member.getName() + "(" + paramsSignature + ")";
+			String methodSignature = member.getName() + "(" + paramsSignature.toString() + ")";
 
 			for (MethodDetails methodDetails : methodsSpecs) {
-				String jsonMethodSingature = methodDetails.getSignature();
-				jsonMethodSingature = eraseGenerics(jsonMethodSingature);
-				if (jsonMethodSingature.equals(methodSignature)) {
+				String jsonMethodSignature = methodDetails.getSignature();
+				if (signaturesMatch(jsonMethodSignature, methodSignature)) {
+					matchedMethodSpecs.add(methodDetails);
 					Operation operation = Operation.getOperation(member.getExecutable());
 					List<String> paramNames = member.getParameters().stream().map(DocumentedParameter::getName)
 							.collect(toList());
@@ -111,23 +117,133 @@ public class CommentTranslatorLLM {
 					spec.addReturnSpecifications(postSpecifications);
 
 					if (foundSpecification) {
+						if (specs.containsKey(member)) {
+							log.error("Overwriting existing specification for executable member: {}", methodSignature);
+						}
 						specs.put(member, spec);
 					}
 				}
 			}
 		}
+
+		for (MethodDetails methodDetails : methodsSpecs) {
+			if (!matchedMethodSpecs.contains(methodDetails)) {
+				log.error("JSON specification failed to match with any class specification: {}",
+						methodDetails.getSignature());
+			}
+		}
+
 		return specs;
 	}
 
-	private static String eraseGenerics(String signature) {
-		// Step 1: Remove generic declarations like <V, E>
-		String noTypeParams = signature.replaceAll("<[^>]*>", "");
+	/**
+	 * Matches two method signatures by comparing normalized simple method names and
+	 * parameter type lists while ignoring FQNs, generics, and parameter names.
+	 */
+	private static boolean signaturesMatch(String jsonSig, String memberSig) {
+		if (jsonSig == null || memberSig == null) {
+			return false;
+		}
+		if (jsonSig.equals(memberSig)) {
+			return true;
+		}
 
-		// Step 2: Replace standalone generic type variables with Object
-		// Matches words like V, E, K, T etc., but avoids replacing actual class names
-		String replacedTypeVars = noTypeParams.replaceAll("\\b[A-Z]\\b", "Object");
+		String normJson = normalizeSignature(jsonSig);
+		String normMember = normalizeSignature(memberSig);
 
-		return replacedTypeVars;
+		if (normJson.equals(normMember)) {
+			return true;
+		}
+
+		String jsonMethodName = extractMethodName(normJson);
+		String memberMethodName = extractMethodName(normMember);
+
+		if (!jsonMethodName.equals(memberMethodName)) {
+			return false;
+		}
+
+		List<String> jsonParamTypes = extractParamTypes(normJson);
+		List<String> memberParamTypes = extractParamTypes(normMember);
+
+		return jsonParamTypes.equals(memberParamTypes);
+	}
+
+	private static String normalizeSignature(String signature) {
+		if (signature == null) {
+			return "";
+		}
+		String result = signature;
+
+		// Step 1: Remove generic type parameters <...> (including nested generics)
+		while (result.contains("<") && result.contains(">")) {
+			result = result.replaceAll("<[^<>]*>", "");
+		}
+
+		// Step 2: Normalize varargs to array syntax
+		result = result.replaceAll("\\.\\.\\.", "[]");
+
+		// Step 3: Remove package prefixes (e.g.
+		// org.apache.commons.collections4.Predicate -> Predicate)
+		result = result.replaceAll("\\b[a-zA-Z_][a-zA-Z0-9_]*\\.", "");
+
+		// Step 4: Replace standalone single-letter generic variables
+		result = result.replaceAll("\\b[A-Z]\\b", "Object");
+
+		// Step 5: Normalize spaces
+		return result.replaceAll("\\s+", " ").trim();
+	}
+
+	private static String extractMethodName(String sig) {
+		int parenIdx = sig.indexOf('(');
+		String namePart = (parenIdx != -1) ? sig.substring(0, parenIdx).trim() : sig.trim();
+
+		// Extract the last token before '(' to skip return type/modifiers if present
+		String[] tokens = namePart.split("\\s+");
+		if (tokens.length > 0) {
+			namePart = tokens[tokens.length - 1];
+		}
+
+		// Strip any remaining package/enclosing class prefix
+		int lastDot = namePart.lastIndexOf('.');
+		if (lastDot != -1) {
+			namePart = namePart.substring(lastDot + 1);
+		}
+		return namePart;
+	}
+
+	private static List<String> extractParamTypes(String sig) {
+		List<String> types = new ArrayList<>();
+		int openParen = sig.indexOf('(');
+		int closeParen = sig.lastIndexOf(')');
+
+		if (openParen == -1 || closeParen == -1 || openParen >= closeParen) {
+			return types;
+		}
+
+		String paramsStr = sig.substring(openParen + 1, closeParen).trim();
+		if (paramsStr.isEmpty()) {
+			return types;
+		}
+
+		String[] params = paramsStr.split(",");
+		for (String param : params) {
+			param = param.trim();
+			if (!param.isEmpty()) {
+				// Strip annotations (@Annotation) and modifiers (final)
+				String[] tokens = param.split("\\s+");
+				List<String> cleanTokens = new ArrayList<>();
+				for (String token : tokens) {
+					if (!token.startsWith("@") && !token.equals("final")) {
+						cleanTokens.add(token);
+					}
+				}
+				if (!cleanTokens.isEmpty()) {
+					// The first valid token is the parameter type
+					types.add(cleanTokens.get(0).toLowerCase());
+				}
+			}
+		}
+		return types;
 	}
 
 	private static Map<String, String> createArgsMap(List<String> paramNames) {
