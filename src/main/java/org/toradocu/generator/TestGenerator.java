@@ -824,9 +824,15 @@ public class TestGenerator {
 
 			targetMethodReturnTypeName = targetMethodReturnTypeName.replaceAll("<[A-Za-z0-9_$? ]+>", "<?>");
 
-			String assignStmt = targetMethodReturnTypeName + " _methodResult__ = " + targetCall;
+			// Remove comments from expression before string conversion to prevent line
+			// comments from breaking Java syntax
+			Expression cleanExpr = targetCall.getExpression().clone();
+			cleanExpr.removeComment();
+
+			String assignStmt = targetMethodReturnTypeName + " _methodResult__ = " + cleanExpr + ";";
 			try {
 				Statement targetCallWithAssignment = StaticJavaParser.parseStatement(assignStmt);
+				targetCall.getComment().ifPresent(targetCallWithAssignment::setComment);
 				insertionPoint.replace(targetCall, targetCallWithAssignment);
 				targetCallToConsider = targetCallWithAssignment;
 			} catch (Exception e) {
