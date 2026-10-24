@@ -279,11 +279,11 @@ public class CommentTranslatorLLM {
 	// Regex for tokens (using non-capturing groups internally to preserve main
 	// group indexing)
 	private static final Pattern TOKEN_PATTERN = Pattern
-			.compile("\\s*(?:(\\d+(?:\\.\\d+)?[lLfFdD]?|0[xX][0-9a-fA-F]+[lL]?)|" + // Group 1: numbers
+			.compile("\\s*(?:(0[xX][0-9a-fA-F]+[lL]?|(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?[fFdDlL]?)|" + // Group 1: numbers (including scientific notation & hex)
 					"([a-zA-Z_][a-zA-Z0-9_]*)|" + // Group 2: identifiers
 					"(==|!=|>=|<=|&&|\\|\\||->|<<|>>|[()!<>])|" + // Group 3: operators and parentheses
 					"(\"(?:[^\"\\\\]|\\\\.)*\")|" + // Group 4: string literals
-					"('(?:[^'\\\\]|\\\\.)*')|" + // Group 5: character literals (e.g. ' ')
+					"('(?:[^'\\\\]|\\\\.)*')|" + // Group 5: character literals
 					"(.))" // Group 6: fallback single char
 			);
 
@@ -329,7 +329,7 @@ public class CommentTranslatorLLM {
 	}
 
 	private static boolean needsSpace(String prev, String curr) {
-		return (prev.matches("[a-zA-Z0-9_\"]+") && curr.matches("[a-zA-Z0-9_\"]+"));
+		return prev.matches(".*[a-zA-Z0-9_\\]\"]$") && curr.matches("^[a-zA-Z0-9_].*");
 	}
 
 }
