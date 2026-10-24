@@ -5,7 +5,6 @@ import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.BinaryExpr.Operator;
-import com.github.javaparser.ast.expr.BooleanLiteralExpr;
 import com.github.javaparser.ast.expr.DoubleLiteralExpr;
 import com.github.javaparser.ast.expr.EnclosedExpr;
 import com.github.javaparser.ast.expr.Expression;
@@ -24,7 +23,6 @@ import java.lang.reflect.WildcardType;
 import java.util.ArrayList;
 import java.util.Arrays;
 
-import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.toradocu.conf.Configuration;
@@ -383,13 +381,17 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		}
 	}
 
+	private static String formatType(Type type, boolean inTypeArguments) {
+		return formatType(type, inTypeArguments, new java.util.HashSet<>());
+	}
+
 	/**
 	 * Formats a reflect Type for casting in non-generic generated code. - Replaces
 	 * type variables (e.g., T, K) and wildcards (?) with java.lang.Object (or their
 	 * upper bound) to avoid wildcard capture errors during compilation. - Preserves
 	 * concrete generic arguments (e.g., Map<java.lang.Object, java.lang.Integer>).
 	 */
-	private static String formatType(Type type, boolean inTypeArguments) {
+	private static String formatType(Type type, boolean inTypeArguments, java.util.Set<TypeVariable<?>> visitedTypeVars) {
 		if (type == null) {
 			return "java.lang.Object";
 		}
@@ -397,12 +399,12 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 		if (type instanceof Class<?>) {
 			Class<?> clazz = (Class<?>) type;
 			if (clazz.isArray()) {
-				return formatType(clazz.getComponentType(), inTypeArguments) + "[]";
+				return formatType(clazz.getComponentType(), inTypeArguments, visitedTypeVars) + "[]";
 			}
 			return clazz.getName().replace('$', '.');
 		} else if (type instanceof ParameterizedType) {
 			ParameterizedType pType = (ParameterizedType) type;
-			String raw = formatType(pType.getRawType(), inTypeArguments);
+			String raw = formatType(pType.getRawType(), inTypeArguments, visitedTypeVars);
 			Type[] args = pType.getActualTypeArguments();
 			if (args == null || args.length == 0) {
 				return raw;
@@ -411,27 +413,32 @@ public class EvaluatorModifierVisitor extends ModifierVisitor<Object> {
 			for (int i = 0; i < args.length; i++) {
 				if (i > 0)
 					sb.append(", ");
-				sb.append(formatType(args[i], true));
+				sb.append(formatType(args[i], true, visitedTypeVars));
 			}
 			sb.append(">");
 			return sb.toString();
 		} else if (type instanceof TypeVariable<?>) {
 			TypeVariable<?> typeVar = (TypeVariable<?>) type;
+			if (visitedTypeVars.contains(typeVar)) {
+				return "java.lang.Object";
+			}
+			java.util.Set<TypeVariable<?>> newVisited = new java.util.HashSet<>(visitedTypeVars);
+			newVisited.add(typeVar);
 			Type[] bounds = typeVar.getBounds();
 			if (bounds != null && bounds.length > 0 && bounds[0] != Object.class) {
-				return formatType(bounds[0], inTypeArguments);
+				return formatType(bounds[0], inTypeArguments, newVisited);
 			}
 			return "java.lang.Object";
 		} else if (type instanceof WildcardType) {
 			WildcardType wType = (WildcardType) type;
 			Type[] upperBounds = wType.getUpperBounds();
-			if (upperBounds != null && upperBounds.length > 0) {
-				return formatType(upperBounds[0], inTypeArguments);
+			if (upperBounds != null && upperBounds.length > 0 && upperBounds[0] != Object.class) {
+				return formatType(upperBounds[0], inTypeArguments, visitedTypeVars);
 			}
 			return "java.lang.Object";
 		} else if (type instanceof GenericArrayType) {
 			GenericArrayType gType = (GenericArrayType) type;
-			return formatType(gType.getGenericComponentType(), inTypeArguments) + "[]";
+			return formatType(gType.getGenericComponentType(), inTypeArguments, visitedTypeVars) + "[]";
 		} else {
 			return type.getTypeName().replace('$', '.');
 		}
