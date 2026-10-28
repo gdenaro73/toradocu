@@ -420,6 +420,7 @@ public class TestGenerator {
 					evaluatorsDir, testsDir, evosuiteBudget);
 			final Path evosuiteLogFilePath = evaluatorsDir.resolve("evosuite-log-" + i + ".txt");
 			try {
+				log.info("EvoSuite -Dpath_condition parameter: " + evaluatorGroups.get(i).asEvosuiteParameter());
 				Process processEvosuite = launchProcess(evosuiteCommand, evosuiteLogFilePath);
 				log.info("Launched EvoSuite process, command line: " + evosuiteCommand.stream().reduce("", (s1, s2) -> {
 					return s1 + " " + s2;
@@ -1116,26 +1117,38 @@ public class TestGenerator {
 	}
 
 	private static String bytecodeStyleSignature(DocumentedExecutable method) {
-		boolean isConstructor = method.isConstructor();
-		String formatted = isConstructor ? "<init>" : method.getName();
-		formatted += "(";
-		for (DocumentedParameter p : method.getParameters()) {
-			formatted += bytecodeStyleType(p.getType().getName());
-		}
-		formatted += ")";
-		if (isConstructor) {
-			formatted += "V";
-		} else {
-			String sig = method.getExecutable().toString();
-			String rawReturnType = sig.substring(0, sig.indexOf(method.getName() + "("));
-			rawReturnType = rawReturnType.substring(0, rawReturnType.lastIndexOf(' '));
-			rawReturnType = rawReturnType.substring(rawReturnType.lastIndexOf(' ') + 1);
-			// String clazz = method.getDeclaringClass().getName();
-			// String rawReturnType = sig.substring(0, sig.indexOf(clazz) - 1);
-			// rawReturnType = rawReturnType.substring(rawReturnType.lastIndexOf(' ') + 1);
-			formatted += bytecodeStyleType(rawReturnType);
-		}
-		return formatted;
+	    boolean isConstructor = method.isConstructor();
+	    
+	    // Extract simple method name (e.g., "predicatedBag" instead of "org.apache.commons.collections4.BagUtils.predicatedBag")
+	    String methodName;
+	    if (isConstructor) {
+	        methodName = "<init>";
+	    } else {
+	        String fullName = method.getName();
+	        int lastDot = fullName.lastIndexOf('.');
+	        methodName = (lastDot != -1) ? fullName.substring(lastDot + 1) : fullName;
+	    }
+
+	    StringBuilder formatted = new StringBuilder(methodName).append("(");
+
+	    // Format parameter types using reflection
+	    java.lang.reflect.Executable executable = method.getExecutable();
+	    for (Class<?> paramType : executable.getParameterTypes()) {
+	        formatted.append(bytecodeStyleType(paramType.getName()));
+	    }
+	    formatted.append(")");
+
+	    // Append return type descriptor
+	    if (isConstructor) {
+	        formatted.append("V");
+	    } else if (executable instanceof java.lang.reflect.Method) {
+	        Class<?> returnType = ((java.lang.reflect.Method) executable).getReturnType();
+	        formatted.append(bytecodeStyleType(returnType.getName()));
+	    } else {
+	        formatted.append("V");
+	    }
+
+	    return formatted.toString();
 	}
 
 	private static String bytecodeStyleType(String typeName) {
